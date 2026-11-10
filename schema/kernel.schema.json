@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KernelForge single kernel.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "source",
+    "toolchain",
+    "build",
+    "droidspaces"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "kernelforge/v1"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clang",
+        "gcc64",
+        "gcc32"
+      ],
+      "properties": {
+        "clang": {
+          "$ref": "#/$defs/toolchainSource"
+        },
+        "gcc64": {
+          "$ref": "#/$defs/gccSource"
+        },
+        "gcc32": {
+          "$ref": "#/$defs/gccSource"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arch",
+        "defconfig"
+      ],
+      "properties": {
+        "arch": {
+          "enum": [
+            "arm",
+            "arm64"
+          ]
+        },
+        "defconfig": {
+          "$ref": "#/$defs/path"
+        },
+        "fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_./-]+$"
+          }
+        },
+        "strict_config": {
+          "type": "boolean"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        }
+      }
+    },
+    "overlays": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "#/$defs/path"
+          },
+          "to": {
+            "$ref": "#/$defs/path"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "$ref": "#/$defs/path"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "template": {
+          "$ref": "#/$defs/path"
+        },
+        "images": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/path"
+          }
+        }
+      }
+    },
+    "droidspaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config",
+        "destination",
+        "target"
+      ],
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/path"
+        },
+        "destination": {
+          "$ref": "#/$defs/path"
+        },
+        "target": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)(?!.*(?:^|/)\\.git/)(?!.*(?:^|/)\\.work/)[^\\s]+$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "ref"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        }
+      }
+    },
+    "toolchainSource": {
+      "$ref": "#/$defs/source"
+    },
+    "gccSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "ref",
+        "prefix"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "prefix": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+-$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+name: KernelForge
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m kernelforge validate
+      - run: python -m kernelforge build --dry-run
+
+  build:
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Build configured kernel with DroidSpaces
+        run: python -m kernelforge build -j 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: droidspaces-kernel-images
+          path: |
+            .work/kernel/out/arch/arm64/boot/Image
+            .work/kernel/out/arch/arm64/boot/dtb
+            .work/kernel/out/arch/arm64/boot/dtbo.img
+          if-no-files-found: error
