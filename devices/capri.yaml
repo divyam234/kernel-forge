@@ -1,4 +1,4 @@
-# Motorola moto g10 / g10 Power (capri), LineageOS 24.0.
+# Motorola moto g10 power (XT2127-4, LineageOS variant 2), codename capri.
 # Source and config from official LineageOS capri + sm6225-common device trees.
 source:
   url: https://github.com/LineageOS/android_kernel_motorola_sm6225.git
@@ -16,7 +16,7 @@ build:
 package:
   output: DroidSpaces-capri.zip
   device:
-    name: Motorola moto g10
+    name: Motorola moto g10 power
     codenames: [capri]
     android_versions: ["17"]
   images:

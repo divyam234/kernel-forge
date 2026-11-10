@@ -29,6 +29,8 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(capri["build"]["artifacts"], ["arch/arm64/boot/Image"])
         self.assertEqual(capri["package"]["images"], {"arch/arm64/boot/Image": "Image"})
         self.assertEqual(capri["package"]["device"]["codenames"], ["capri"])
+        self.assertEqual(capri["package"]["device"]["name"], "Motorola moto g10 power")
+        self.assertNotIn("caprip", capri["package"]["device"]["codenames"])
         self.assertEqual(capri["package"]["device"]["android_versions"], ["17"])
         self.assertEqual(capri["package"]["output"], "DroidSpaces-capri.zip")
         self.assertEqual(cli.workspace_name("capri"), "kernel-capri")
@@ -53,6 +55,7 @@ class DeviceTests(unittest.TestCase):
         data = cli.load_config("capri")
         script = cli.render_anykernel(data["package"])
         self.assertIn("device.name1=capri\n", script)
+        self.assertIn("kernel.string=Motorola moto g10 power", script)
         self.assertIn("do.devicecheck=0\n", script)
         self.assertIn("BLOCK=boot;", script)
         with tempfile.TemporaryDirectory() as temp:

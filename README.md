@@ -2,7 +2,7 @@
 
 **Shared `kernel.yaml` plus a small YAML file per device. DroidSpaces is mandatory for every target.**
 
-KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports, one pinned LLVM toolchain, and device-specific AnyKernel3 ZIPs. Supported targets: OnePlus 9R (`lemonades`, SM8250) and Motorola moto g10 (`capri`, Snapdragon SM4250, using the SM6225/Bengal-family source tree). Each uses its official LineageOS source and defconfig; **no OnePlus kernel settings are used on capri**.
+KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports, one pinned LLVM toolchain, and device-specific AnyKernel3 ZIPs. Supported targets: OnePlus 9R (`lemonades`, SM8250) and **Motorola moto g10 power (XT2127-4, LineageOS variant 2)** under `capri` (Snapdragon SM4250, using the SM6225/Bengal-family source tree). The regular moto g10 is variant 1 of the same LineageOS `capri` build; `caprip` is a different device (moto g30). Each target uses its official LineageOS kernel source and defconfig.
 
 ## Run
 
@@ -27,7 +27,7 @@ The commands are not a complete LineageOS ROM build. Integration into an Android
 ~~~text
 kernel.yaml                      Shared LLVM, DroidSpaces, patches, AnyKernel3 defaults
 devices/lemonades.yaml            OnePlus 9R kernel and package settings
-devices/capri.yaml                Motorola moto g10 kernel and package settings
+devices/capri.yaml                Moto g10 power (variant 2) kernel and package settings
 build.sh                         Command-line entrypoint
 kernelforge/cli.py               Source / patch / config / build / package
 assets/droidspaces.config        Always included
@@ -145,14 +145,16 @@ build:
 package:
   output: DroidSpaces-capri.zip
   device:
-    name: Motorola moto g10
+    name: Motorola moto g10 power
     codenames: [capri]
     android_versions: ["17"]
   images:
     arch/arm64/boot/Image: Image
 ~~~
 
-Generated installers default to `do.devicecheck=0` for both devices. Set `package.device_check: true` in shared `kernel.yaml` to enforce the selected codename. Both use `boot` and automatic slot detection without Magisk. **Capri packages only the kernel `Image`**: the existing DTB and DTBO are retained because this kernel source does not produce verified combined images for standalone packaging. Capri's boot-header-v3 and vendor_boot arrangement still require real-device testing. **Never cross-flash** ZIPs between capri and lemonades.
+Generated installers default to `do.devicecheck=0` for both devices. Set `package.device_check: true` in shared `kernel.yaml` to enforce codenames; with the default off, the installer will **not** protect against accidentally flashing a ZIP on a different phone. Both use `boot` and automatic slot detection without Magisk. **Capri packages only the kernel `Image`** and does not supply replacement DTB/DTBO images. The official `capri-default.config` sets `CONFIG_CAPRI_DTB=y` for both G10 variants; **do not switch to `CONFIG_CAPRIP_DTB`**, which belongs to moto g30. AnyKernel3's ability to preserve the installed boot header v3, device-tree data and the matched vendor_boot/dtbo partitions still requires real-device testing on XT2127-4. **Never cross-flash** ZIPs between capri and lemonades.
+
+**Moto g10 power verification before flashing:** confirm model `XT2127-4` and device codename `capri` (`adb shell getprop ro.product.device`); confirm the required Android 11 stock firmware baseline from the [LineageOS 24.0 variant-2 installation guide](https://lineageos.github.io/lineage_wiki/devices/capri/install/variant2/); retain matching boot/vendor_boot/dtbo images and a recovery method. The Power model has a 6000 mAh battery versus 5000 mAh on the regular G10, but LineageOS uses the same `capri` source/configuration, so **no separate Power-specific kernel fragment** is required.
 
 For another device, create `devices/<codename>.yaml` with source URL and branch ref (no pinned kernel SHA), defconfig/fragments, and AnyKernel3 device/output/images. Verify its kernel config, cgroup patch applicability, boot partition, DTB/DTBO format and recovery plan. A ZIP alone does not prove flash compatibility.
 
