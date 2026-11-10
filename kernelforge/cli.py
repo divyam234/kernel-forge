@@ -533,6 +533,8 @@ def main(argv=None):
             sub.add_argument("--dry-run", action="store_true", help="Print actions without writing or downloading")
         if command == "build":
             sub.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 4)
+            sub.add_argument("--no-package", action="store_true",
+                             help="Compile only; package separately after persisting build caches")
     opts = parser.parse_args(argv)
     try:
         data = load_config(opts.device)
@@ -546,7 +548,8 @@ def main(argv=None):
         elif opts.command == "build":
             require(opts.jobs > 0, "jobs must be greater than zero")
             build(name, data, opts.jobs, dry=opts.dry_run)
-            package(name, data, dry=opts.dry_run)
+            if not opts.no_package:
+                package(name, data, dry=opts.dry_run)
         elif opts.command == "package":
             package(name, data, dry=opts.dry_run)
         return 0

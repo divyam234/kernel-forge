@@ -112,7 +112,7 @@ jobs:
       # the newest ccache for this OS/architecture. Compiler flags are hashed
       # by ccache, so obsolete outputs do not produce false cache hits.
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-${{ hashFiles('kernel.yaml', 'devices/**', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -126,8 +126,22 @@ jobs:
           ccache --zero-stats
           ccache --show-config | grep -E 'cache_dir|base_dir|compiler_check|max_size' || true
 
-      - name: Build and package selected kernel.yaml (DroidSpaces always enabled)
-        run: python -m kernelforge build --device "${{ matrix.device }}" -j "$(nproc)"
+      - name: Compile selected kernel (DroidSpaces always enabled)
+        id: compile
+        run: python -m kernelforge build --device "${{ matrix.device }}" -j "$(nproc)" --no-package
+
+      # Persist compiled objects BEFORE packaging. Also save partial results if
+      # compilation fails; cancellation still cannot guarantee cache persistence.
+      - name: Save ccache immediately after compilation
+        if: ${{ always() && !cancelled() && steps.compile.outcome != 'skipped' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-${{ hashFiles('kernel.yaml', 'devices/**', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Package compiled kernel
+        if: ${{ steps.compile.outcome == 'success' }}
+        run: python -m kernelforge package --device "${{ matrix.device }}"
 
       - name: Report ccache performance
         if: always()

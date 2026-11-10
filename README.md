@@ -107,7 +107,7 @@ The checksum-verified GitHub release archive is cached and shared, while source/
 
 GitHub Actions validates and dry-runs both device configurations on pull requests. Pushes to `main` build **both devices in separate matrix jobs**. For manual builds, go to **Actions → KernelForge → Run workflow** and choose `both` (default), `lemonades`, or `capri`; only the selected device jobs compile. Each job produces a separate AnyKernel3 ZIP, images and `.config` artifact (14-day retention). Manual runs use independent workflow concurrency groups so running one device does not cancel or block another. GitHub Releases publishing is not enabled.
 
-Each matrix build runs kernel compilation with `-j "$(nproc)"`, using the runner's available processing units instead of a hardcoded parallelism value. The jobs restore the shared pinned LLVM toolchain and separate ccache keys (device + configuration hash), report cache statistics and upload device-labeled artifacts. Actual full compilation and hardware boot have not been confirmed for capri.
+Each matrix build runs kernel compilation with `-j "$(nproc)"`, using the runner\'s available processing units instead of a hardcoded parallelism value. The jobs restore the shared pinned LLVM toolchain and device-specific ccache, then **explicitly save ccache immediately after compilation and before ZIP packaging**. Partial compilation caches are also saved on ordinary build failures; cancelled jobs cannot reliably save their cache. Packaging runs separately only after successful compilation, and artifacts are uploaded after packaging. Actual full compilation and hardware boot have not been confirmed for capri.
 
 To use ccache locally (including on ARM64 hosts with a native LLVM toolchain):
 
