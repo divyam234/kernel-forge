@@ -2,7 +2,7 @@
 
 **Shared `kernel.yaml` plus a small YAML file per device. DroidSpaces is mandatory for every target.**
 
-KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports and one pinned LLVM toolchain. OnePlus 9R (`lemonades`, SM8250) retains its standard AnyKernel3 ZIP. **Motorola moto g10 power (XT2127-4, LineageOS variant 2)** uses a **non-flashable Capri payload ZIP** for offline image generation. The regular moto g10 is variant 1 of the same LineageOS `capri` build; `caprip` is a different device (moto g30). Each target uses its official LineageOS kernel source and defconfig.
+KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports and one pinned LLVM toolchain. OnePlus 9R (`lemonades`, SM8250) retains its standard AnyKernel3 ZIP. **Motorola moto g10 power (XT2127-4, LineageOS variant 2)** uses a **non-flashable Capri payload ZIP** as an intermediate for complete image generation; Actions publishes finished images for the exact November 5, 2026 LineageOS 24.0 ROM. The regular moto g10 is variant 1 of the same LineageOS `capri` build; `caprip` is a different device (moto g30). Each target uses its official LineageOS kernel source and defconfig.
 
 ## Run
 
@@ -134,7 +134,7 @@ The checksum-verified GitHub release archive is cached and shared, while source/
 
 ## GitHub Actions and ccache
 
-GitHub Actions runs **only when manually dispatched**: commits and pull requests do **not** trigger builds. Choose `both` (default), `lemonades`, or `capri` in the existing workflow. Each run validates both configurations and executes tests before compilation. Every successful compilation uploads `compiled-<device>-<run_number>` containing `Image` and `kernel.config` **before packaging**; Capri also includes `modules.tar.gz` with its matching module binaries and ABI inputs. Package artifact names follow the configured output filename: `DroidSpaces-capri-payload-<run_number>` contains the **non-flashable** payload, and `DroidSpaces-lemonades-<run_number>` contains the unchanged standard AnyKernel3 ZIP. Both have 14-day retention. Files are staged under visible `dist/` paths. Manual runs are independent and do not automatically cancel. GitHub Releases publishing is not enabled. No workflow flashes a phone.
+GitHub Actions runs **only when manually dispatched**: commits and pull requests do **not** trigger builds. Choose `both` (default), `lemonades`, or `capri` in the existing workflow. Each run validates both configurations and executes tests before compilation. Every successful compilation uploads `compiled-<device>-<run_number>` containing `Image` and `kernel.config` **before packaging**; Capri also includes `modules.tar.gz` with its matching module binaries and ABI inputs. Capri then automatically downloads and verifies the pinned official ROM, extracts matching originals and generates `boot.img`, `vendor_boot.img`, `vendor.img` and `manifest.json`. Only successful complete generation uploads `DroidSpaces-capri-images-lineage-24.0-20261105-<run_number>`; the non-flashable payload remains an intermediate, not a published installer. `DroidSpaces-lemonades-<run_number>` still contains the unchanged standard AnyKernel3 ZIP. Artifacts have 14-day retention and are staged under visible `dist/` paths. Manual runs are independent and do not automatically cancel. GitHub Releases publishing is not enabled. No workflow flashes a phone.
 
 Each matrix build compiles with `-j "$(nproc)"`, using the runner's available processing units instead of hardcoded parallelism. Jobs restore the shared LLVM toolchain and device-specific ccache, then **explicitly save ccache immediately after compilation and before packaging**. Partial compilation caches are also saved on ordinary build failures; cancelled jobs cannot reliably save their cache. The compiled `Image` and config are uploaded before ZIP packaging so packaging errors cannot discard finished kernel outputs. Official GitHub Actions use checkout v7, setup-python v7, cache v6, and upload-artifact v7.
 
@@ -166,6 +166,11 @@ policy unchanged. Capri sets `package.type: manual-images` and produces
 it or install it in recovery or a kernel-manager app. Previous Capri sideload
 artifacts are unsafe and must not be used.** The recovery-time module installer
 has been removed; `anykernel3` packages cannot include matched modules.
+Actions uses this payload only as an intermediate and publishes complete images
+instead. The finished Capri artifact is for **only**
+`lineage-24.0-20261105-nightly-capri-signed.zip`, not another nightly or ROM.
+It requires manual bootloader/fastbootd flashing as described below, not sideload.
+
 
 The Capri ZIP contains only `boot-files/Image`, matched vendor and early-boot
 module trees and checksum manifests, pinned `tools/magiskboot` and `tools/fec`,
@@ -196,26 +201,40 @@ Keep the originals and an independent restore method. No replacement DTB/DTBO
 is supplied: unrelated ramdisk data and the original device-tree data are
 retained. Keep `CONFIG_CAPRI_DTB=y`; `CAPRIP` belongs to the Moto G30.
 
-The offline generator needs Python dependencies from `requirements.txt`,
-e2fsprogs (`debugfs`, `e2fsck`) and `avbtool` on `PATH`. On an x86_64 host,
-install QEMU user-mode support (`qemu-arm`, commonly from `qemu-user`) for
-the bundled ARM Android `magiskboot`. The appropriate QEMU executable is
-selected automatically for nonnative tools.
+The managed provisioning helper automatically downloads the official
+[`lineage-24.0-20261105-nightly-capri-signed.zip`](https://mirrorbits.lineageos.org/full/capri/20261105/lineage-24.0-20261105-nightly-capri-signed.zip)
+(1,147,102,832 bytes), pinned to SHA256
+`34486153eacc2b0e6f6de471a89dae726f278f66a95adb2977a9b952105b3463`.
+It does not select the latest nightly. It verifies the ZIP and uses pinned
+`payload-dumper-go` 2.1.0 with its normal payload verification to extract only
+`boot`, `vendor_boot` and `vendor`, then checks each image's expected SHA256.
+The managed `.work/capri-lineage-20261105` cache includes the ZIP, originals and
+tools; cached files are checksum-validated on reuse. Actions caches that entire
+directory under a fixed dated key.
+If the dated ROM disappears upstream and no verified cache exists, preparation
+fails rather than substituting a newer nightly. Updating the base-ROM pins
+requires testing that new ROM/image combination.
 
-Install a native Android `fec` encoder on `PATH` as well. The bundled Android
-`fec` is dynamically linked and QEMU alone cannot supply its Android linker
-and libraries; that failure aborts image construction rather than dropping FEC.
-For the local smoke run, native `fec` and its matching `libc++.so` came from
-[AOSP build-tools commit `07b44a63150de430daa6338a18067e7521a458e1`](https://android.googlesource.com/kernel/prebuilts/build-tools/+/07b44a63150de430daa6338a18067e7521a458e1/).
-Keep the prebuilt's `bin/` and `lib64/` layout and add its `bin/` to `PATH`.
+On Linux x86_64, install Python dependencies from `requirements.txt` and
+`e2fsprogs`, `qemu-user`, `libc6` and `libgcc-s1` (Actions installs these).
+QEMU runs the bundled ARM Android `magiskboot`. The provisioning helper also
+downloads checksum-pinned **native** `avbtool`, `fec` and matching `libc++.so`
+from [AOSP build-tools commit `07b44a63150de430daa6338a18067e7521a458e1`](https://android.googlesource.com/kernel/prebuilts/build-tools/+/07b44a63150de430daa6338a18067e7521a458e1/).
+Keep their `tools/bin/` and `tools/lib64/` layout and put the absolute `tools/bin/`
+on `PATH`. The bundled Android `fec` needs an Android linker and libraries;
+QEMU alone is not sufficient, so image generation uses the native provisioned
+encoder instead and never silently drops FEC.
 
 ~~~bash
+python -m kernelforge.lineage --output .work/capri-lineage-20261105
+export PATH="$PWD/.work/capri-lineage-20261105/tools/bin:$PATH"
+mkdir -p dist/images
 python -m kernelforge.images \
   --payload .work/kernel-capri/DroidSpaces-capri-payload.zip \
-  --boot /path/to/matching-originals/boot.img \
-  --vendor-boot /path/to/matching-originals/vendor_boot.img \
-  --vendor /path/to/matching-originals/vendor.img \
-  --output /path/to/existing-parent/capri-images
+  --boot .work/capri-lineage-20261105/originals/boot.img \
+  --vendor-boot .work/capri-lineage-20261105/originals/vendor_boot.img \
+  --vendor .work/capri-lineage-20261105/originals/vendor.img \
+  --output dist/images/capri
 ~~~
 
 The output directory must not already exist; its parent must exist. The command
@@ -249,10 +268,11 @@ originals, manually flashed to slot `b`, and completed Android boot.
   mapping was linear. Neither vbmeta partition was changed. This is an observed
   device configuration, not a recommendation to disable verification elsewhere.
 
-The new payload packaging and offline generator passed 92 local tests and a
-full-ROM generation smoke run. The workflow's new non-flashable artifact format
-has not yet been exercised by a subsequent GitHub run. Physical boot evidence
-does not establish complete hardware, app-root, or container workload coverage.
+The payload packaging and offline generator passed 92 local tests and a
+full-ROM generation smoke run during that verification. Those results describe
+the run-18 kernel and manual image generation, not a later Actions image artifact.
+Physical boot evidence does not establish complete hardware, app-root, or
+container workload coverage.
 
 For DroidSpaces userspace setup, the [official Android guide](https://www.droidspaces.org/docs/installation-android.html)
 says the app installs its backend and a small root-manager boot module itself.

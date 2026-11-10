@@ -89,6 +89,10 @@ jobs:
             bc bison flex build-essential ccache \
             libssl-dev libelf-dev libncurses-dev \
             device-tree-compiler dwarves
+          if test "${{ matrix.device }}" = capri; then
+            sudo apt-get install -y --no-install-recommends \
+              e2fsprogs qemu-user libc6 libgcc-s1
+          fi
 
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
@@ -177,11 +181,53 @@ jobs:
           mkdir -p "dist/packages/$device"
           cp ".work/$workspace/$filename" "dist/packages/$device/"
           ls -lh "dist/packages/$device/"
-          if test "$device" = capri; then
-            echo '### Capri: NON-FLASHABLE payload; generate complete images offline. Never sideload this ZIP.' >> "$GITHUB_STEP_SUMMARY"
-          else
+          if test "$device" = lemonades; then
             echo '### Lemonades: standard AnyKernel3 ZIP (unchanged).' >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Cache pinned Capri LineageOS originals and tools
+        if: ${{ success() && matrix.device == 'capri' && steps.package.outcome == 'success' }}
+        uses: actions/cache@v6
+        with:
+          path: .work/capri-lineage-20261105
+          key: capri-lineage-24.0-20261105-v1-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Prepare verified Capri LineageOS originals and native tools
+        if: ${{ success() && matrix.device == 'capri' && steps.package.outcome == 'success' }}
+        run: |
+          python -m kernelforge.lineage --output .work/capri-lineage-20261105
+          echo "$GITHUB_WORKSPACE/.work/capri-lineage-20261105/tools/bin" >> "$GITHUB_PATH"
+
+      - name: Generate complete Capri images
+        id: images
+        if: ${{ success() && matrix.device == 'capri' && steps.package.outcome == 'success' }}
+        run: |
+          mkdir -p dist/images
+          python -m kernelforge.images \
+            --payload "dist/packages/capri/${{ steps.package.outputs.filename }}" \
+            --boot .work/capri-lineage-20261105/originals/boot.img \
+            --vendor-boot .work/capri-lineage-20261105/originals/vendor_boot.img \
+            --vendor .work/capri-lineage-20261105/originals/vendor.img \
+            --output dist/images/capri
+          {
+            echo '### Capri: complete boot.img, vendor_boot.img, vendor.img and manifest.json'
+            echo 'Base ROM: lineage-24.0-20261105-nightly-capri-signed.zip only; do not use on another installed ROM build.'
+            echo 'Manual bootloader/fastbootd flashing only: boot and vendor_boot in bootloader fastboot; vendor in fastbootd. Verify the active slot and keep matching originals for recovery.'
+            echo 'Never sideload these images or the intermediate payload ZIP. CI does not flash devices.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload complete Capri images
+        if: ${{ always() && !cancelled() && matrix.device == 'capri' && steps.images.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: DroidSpaces-capri-images-lineage-24.0-20261105-${{ github.run_number }}
+          path: |
+            dist/images/capri/boot.img
+            dist/images/capri/vendor_boot.img
+            dist/images/capri/vendor.img
+            dist/images/capri/manifest.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Report ccache performance
         if: always()
@@ -196,8 +242,8 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload package (Capri non-flashable payload; lemonades AnyKernel3)
-        if: ${{ always() && !cancelled() && steps.package.outcome == 'success' }}
+      - name: Upload OnePlus AnyKernel3 package
+        if: ${{ always() && !cancelled() && matrix.device == 'lemonades' && steps.package.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.artifact }}
