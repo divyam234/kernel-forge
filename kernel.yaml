@@ -12,8 +12,6 @@ build:
   targets: []
   artifacts:
     - arch/arm64/boot/Image
-    - arch/arm64/boot/dtb
-    - arch/arm64/boot/dtbo.img
   ccache:
     enabled: true
     max_size: 2G

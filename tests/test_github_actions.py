@@ -67,8 +67,9 @@ class GithubActionsTests(unittest.TestCase):
         upload = next(s for s in steps if s.get("name") == "Upload generated AnyKernel3 ZIP and kernel images")
         self.assertEqual(upload["uses"], "actions/upload-artifact@v4")
         self.assertIn("matrix.device", upload["with"]["name"])
-        for path in ("Image*", "dtb*", "*.zip", ".config"):
+        for path in ("Image*", "*.zip", ".config"):
             self.assertIn(path, upload["with"]["path"])
+        self.assertNotIn("dtb*", upload["with"]["path"])
 
 
 if __name__ == "__main__":

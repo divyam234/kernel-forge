@@ -15,5 +15,3 @@ package:
     android_versions: ["17"]
   images:
     arch/arm64/boot/Image: Image
-    arch/arm64/boot/dtb: dtb
-    arch/arm64/boot/dtbo.img: dtbo.img

@@ -149,7 +149,6 @@ jobs:
           path: |
             .work/kernel*/*.zip
             .work/kernel*/out/arch/**/boot/Image*
-            .work/kernel*/out/arch/**/boot/dtb*
             .work/kernel*/out/.config
           if-no-files-found: error
           retention-days: 14

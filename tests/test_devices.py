@@ -15,6 +15,14 @@ from kernelforge import cli
 
 
 class DeviceTests(unittest.TestCase):
+    def test_lemonades_packages_only_kernel_image(self):
+        lemonades = cli.load_config("lemonades")
+        self.assertEqual(lemonades["build"]["artifacts"], ["arch/arm64/boot/Image"])
+        self.assertEqual(lemonades["package"]["images"], {"arch/arm64/boot/Image": "Image"})
+        self.assertNotIn("dtb", lemonades["package"]["images"].values())
+        self.assertNotIn("dtbo.img", lemonades["package"]["images"].values())
+
+
     def test_capri_uses_official_lineage24_kernel_config(self):
         capri = cli.load_config("capri")
         self.assertEqual(capri["source"]["url"],
