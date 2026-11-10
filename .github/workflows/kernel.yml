@@ -6,37 +6,117 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Avoid spending build minutes on superseded commits to the same branch.
+concurrency:
+  group: kernel-forge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
   validate:
+    name: Validate kernel.yaml and tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements.txt
-      - run: python -m unittest discover -s tests -v
-      - run: python -m kernelforge validate
-      - run: python -m kernelforge build --dry-run
+          cache: pip
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Validate configuration
+        run: python -m kernelforge validate
+      - name: Preview build commands
+        run: python -m kernelforge build --dry-run
 
   build:
-    if: github.event_name == 'workflow_dispatch'
+    name: Build LineageOS kernel with DroidSpaces (LLVM + ccache)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_COMPRESS: 'true'
+      # Maximum cache size is read from build.ccache.max_size in kernel.yaml.
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements.txt
-      - name: Build configured kernel with DroidSpaces
-        run: python -m kernelforge build -j 4
-      - uses: actions/upload-artifact@v4
+          cache: pip
+
+      - name: Install build dependencies and ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential ccache \
+            libssl-dev libelf-dev libncurses-dev \
+            device-tree-compiler dwarves
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Resolve pinned LLVM identity
+        id: llvm
+        run: |
+          echo "identity=$(python -c 'from kernelforge.cli import load_config; t=load_config()["toolchain"]; print(t.get("commit") or t["ref"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pinned LLVM toolchain
+        uses: actions/cache@v4
         with:
-          name: droidspaces-kernel-images
+          path: .work/_toolchains/kernel/llvm
+          key: llvm-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.llvm.outputs.identity }}
+
+      # Include a unique run ID because GitHub caches cannot be updated in place.
+      # Restore the newest prior cache for the same config, then fall back to
+      # the newest ccache for this OS/architecture. Compiler flags are hashed
+      # by ccache, so obsolete outputs do not produce false cache hits.
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('kernel.yaml', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('kernel.yaml', 'assets/**', 'patches/**') }}-
+            ccache-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Initialize cache statistics
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache --zero-stats
+          ccache --show-config | grep -E 'cache_dir|base_dir|compiler_check|max_size' || true
+
+      - name: Build selected kernel.yaml (DroidSpaces always enabled)
+        run: python -m kernelforge build -j 4
+
+      - name: Report ccache performance
+        if: always()
+        run: |
+          if command -v ccache >/dev/null; then
+            ccache --show-stats
+            {
+              echo '### Ccache statistics'
+              echo '```'
+              ccache --show-stats
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload compiled kernel images
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineage24-droidspaces-kernel-${{ github.run_number }}
           path: |
             .work/kernel/out/arch/arm64/boot/Image
             .work/kernel/out/arch/arm64/boot/dtb
             .work/kernel/out/arch/arm64/boot/dtbo.img
+            .work/kernel/out/.config
           if-no-files-found: error
+          retention-days: 14

@@ -26,6 +26,10 @@ build:
     - arch/arm64/boot/dtb
     - arch/arm64/boot/dtbo.img
   strict_config: true
+  # Cache Clang compilation locally and on GitHub Actions.
+  ccache:
+    enabled: true
+    max_size: 2G
 
 # Mandatory: always applied, and always merged as the final fragment.
 droidspaces:

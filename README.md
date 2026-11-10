@@ -6,7 +6,7 @@ KernelForge compiles a selected Android kernel with mandatory DroidSpaces suppor
 
 ## Run
 
-Linux x86_64 with Python 3.10+, Git, Make, standard kernel build dependencies:
+Linux x86_64 with Python 3.10+, Git, Make, `ccache`, and standard kernel build dependencies (CI installs these automatically):
 
 ~~~bash
 python3 -m pip install -r requirements.txt
@@ -90,6 +90,31 @@ export KERNELFORGE_LLVM_BIN=/opt/llvm/bin
 ~~~
 
 The `kernel.yaml` source and LLVM toolchain are both pinned to full Git commit hashes. If switching to another kernel version, check that it supports Clang's integrated assembler and the LLVM utilities before building. The build setup is not yet compiler-tested end to end.
+
+## GitHub Actions and ccache
+
+The GitHub Actions workflow (`.github/workflows/kernel.yml`) validates configuration and tests on pull requests. On pushes to `main` and manual `Actions → KernelForge → Run workflow` events it additionally compiles the one kernel defined in `kernel.yaml`, with DroidSpaces always enabled. Successful builds upload `Image`, `dtb`, `dtbo.img`, and the resolved kernel `.config` as downloadable workflow artifacts (retained for 14 days). No generic flashable ZIP is produced.
+
+The build job installs `ccache` and dependencies, restores the pinned LLVM toolchain checkout and a compressed ccache directory using `actions/cache@v4`, resets hit/miss counters, builds with the pinned Clang toolchain, and prints cache statistics to both the job log and GitHub Actions step summary. The LLVM cache key follows the toolchain commit. Ccache keys include the runner OS/architecture and a configuration hash; a unique run ID permits refreshing the cache after every successful build. An older cache can be restored when configuration changes; ccache validates the compiler and inputs itself. The ccache limit defaults to 2 GiB via `kernel.yaml`; GitHub's cache retention/eviction limits still apply.
+
+To use ccache locally (including on ARM64 hosts with a native LLVM toolchain):
+
+~~~bash
+sudo apt-get install ccache
+./build.sh build -j 8
+CCACHE_DIR="$PWD/.work/_ccache" ccache --show-stats
+~~~
+
+Ccache is on by default via the single YAML file:
+
+~~~yaml
+build:
+  ccache:
+    enabled: true
+    max_size: 2G
+~~~
+
+KernelForge invokes `CC=ccache clang`, `HOSTCC=ccache clang`, and `HOSTCXX=ccache clang++` in **both** Make invocations, while keeping `LLVM=1 LLVM_IAS=1`. No GCC toolchain is introduced. Local cache files are stored at `.work/_ccache`; CI overrides `CCACHE_DIR` to `.ccache` so GitHub Actions can persist the cache. Set `enabled: false` if ccache is unavailable; initial builds are typically cache misses, and linking and device-tree generation are not cached by ccache. This setup has passed local tests and dry-runs; the actual GitHub-hosted kernel compile still needs a successful workflow run.
 
 ## Safe packaging
 

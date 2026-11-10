@@ -58,6 +58,22 @@
           "items": {
             "$ref": "#/$defs/path"
           }
+        },
+        "ccache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "max_size": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[KMGT]$"
+            }
+          }
         }
       }
     },

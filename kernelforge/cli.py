@@ -92,7 +92,7 @@ def load_config():
                 "toolchain.commit must be a full 40-character SHA")
 
     build = data.get("build")
-    fields(build, {"arch", "defconfig", "fragments", "targets", "artifacts", "strict_config"}, "build")
+    fields(build, {"arch", "defconfig", "fragments", "targets", "artifacts", "strict_config", "ccache"}, "build")
     require(build.get("arch") in ("arm64", "arm"), "build.arch must be arm or arm64")
     relative(build.get("defconfig"), "build.defconfig")
     require(isinstance(build.get("fragments", []), list), "build.fragments must be a list")
@@ -106,6 +106,11 @@ def load_config():
     for item in build.get("artifacts", []):
         relative(item, "build.artifacts entry")
     require(type(build.get("strict_config", True)) is bool, "strict_config must be boolean")
+    cache = build.get("ccache", {"enabled": False})
+    validate_item(cache, {"enabled", "max_size"}, "build.ccache")
+    size = cache.get("max_size", "2G")
+    require(isinstance(size, str) and bool(re.fullmatch(r"[1-9][0-9]*[KMGT]", size)),
+            "build.ccache.max_size must be a size such as 2G or 512M")
 
     for n, item in enumerate(data.get("overlays", [])):
         validate_item(item, {"from", "to", "enabled"}, "overlay " + str(n))
@@ -249,6 +254,13 @@ def build_environment(data, llvm_bin):
     # No GCC binaries, prefixes or mixed compiler toolchains.
     for var in ("CROSS_COMPILE", "CROSS_COMPILE_ARM32", "CLANG_TRIPLE"):
         env.pop(var, None)
+    cache = data["build"].get("ccache", {})
+    if cache.get("enabled", False):
+        env.setdefault("CCACHE_DIR", str(WORK / "_ccache"))
+        env.setdefault("CCACHE_BASEDIR", str(ROOT))
+        env.setdefault("CCACHE_COMPILERCHECK", "content")
+        env.setdefault("CCACHE_COMPRESS", "true")
+        env.setdefault("CCACHE_MAXSIZE", cache.get("max_size", "2G"))
     return env
 
 
@@ -301,6 +313,13 @@ def build(name, data, jobs, dry=False):
         out.mkdir(parents=True, exist_ok=True)
     base = ["make", "ARCH=" + data["build"]["arch"], "O=" + str(out.resolve()),
             "LLVM=1", "LLVM_IAS=1"]
+    if data["build"].get("ccache", {}).get("enabled", False):
+        require(shutil.which("ccache", path=env["PATH"]) is not None or dry,
+                "ccache enabled in kernel.yaml but executable not found. Install ccache or disable build.ccache.")
+        # Command-line variables override the kernel's CC/HOSTCC defaults.
+        # Keep the same LLVM compiler for kernel and host compilation.
+        base.extend(["CC=ccache clang", "HOSTCC=ccache clang",
+                     "HOSTCXX=ccache clang++"])
     config_targets = ([data["build"]["defconfig"]] + data["build"].get("fragments", [])
                       + [data["droidspaces"]["target"]])
     run(base + config_targets, cwd=src, env=env, dry=dry)
@@ -309,6 +328,8 @@ def build(name, data, jobs, dry=False):
         raise ForgeError("Kernel Kconfig discarded requested features; refusing build")
     run(base + ["-j" + str(jobs)] + data["build"].get("targets", []),
         cwd=src, env=env, dry=dry)
+    if data["build"].get("ccache", {}).get("enabled", False):
+        run(["ccache", "--show-stats"], env=env, dry=dry)
     if not dry:
         for item in data["build"].get("artifacts", []):
             artifact = (out / relative(item, "build.artifacts entry")).resolve()

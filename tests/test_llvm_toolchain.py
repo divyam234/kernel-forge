@@ -60,14 +60,48 @@ class LLVMToolchainTests(unittest.TestCase):
              redirect_stdout(io.StringIO()):
             cli.build(cli.WORK_NAME, cfg, 4, dry=True)
 
-        self.assertEqual(len(calls), 2)
-        for args, kwargs in calls:
+        self.assertEqual(len(calls), 3)
+        for args, kwargs in calls[:2]:
             self.assertIn("LLVM=1", args)
             self.assertIn("LLVM_IAS=1", args)
             self.assertNotIn("CROSS_COMPILE=", " ".join(args))
+            self.assertIn("CC=ccache clang", args)
+            self.assertIn("HOSTCC=ccache clang", args)
+            self.assertIn("HOSTCXX=ccache clang++", args)
             self.assertEqual(kwargs["env"]["PATH"].split(os.pathsep)[0], "/opt/llvm/bin")
         self.assertEqual(calls[1][0][-1], "-j4")
+        self.assertEqual(calls[2][0], ["ccache", "--show-stats"])
+        self.assertEqual(calls[1][1]["env"]["CCACHE_MAXSIZE"], "2G")
         self.assertIn("vendor/droidspaces.config", calls[0][0])
+
+    def test_ccache_disabled_uses_plain_llvm(self):
+        cfg = cli.load_config()
+        cfg["build"]["ccache"]["enabled"] = False
+        calls = []
+
+        def record(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return ""
+
+        with (
+            patch.object(cli, "prepare", return_value=Path("/src")),
+            patch.object(cli, "bootstrap_toolchain", return_value=Path("/opt/llvm/bin")),
+            patch.object(cli, "run", side_effect=record),
+            redirect_stdout(io.StringIO()),
+        ):
+            cli.build(cli.WORK_NAME, cfg, 4, dry=True)
+
+        self.assertEqual(len(calls), 2)
+        for args, kwargs in calls:
+            self.assertNotIn("CC=ccache clang", args)
+            self.assertNotIn("CCACHE_MAXSIZE", kwargs["env"])
+
+    def test_ccache_config_validation(self):
+        cfg = cli.load_config()
+        self.assertEqual(cfg["build"]["ccache"], {"enabled": True, "max_size": "2G"})
+        cfg["build"]["ccache"]["enabled"] = "true"
+        with self.assertRaises(cli.ForgeError):
+            cli.validate_item(cfg["build"]["ccache"], {"enabled", "max_size"}, "build.ccache")
 
 
 if __name__ == "__main__":
