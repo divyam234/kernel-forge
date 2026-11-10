@@ -31,8 +31,8 @@ jobs:
     outputs:
       devices: ${{ steps.select.outputs.devices }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -79,9 +79,9 @@ jobs:
       CCACHE_COMPRESS: 'true'
       # Maximum cache size is read from build.ccache.max_size in kernel.yaml.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -102,7 +102,7 @@ jobs:
           echo "identity=$(python -c 'from kernelforge.cli import load_config; t=load_config()["toolchain"]; print(t.get("sha256") or t.get("commit") or t["ref"])')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pinned LLVM toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .work/_toolchains/kernel/llvm
           key: llvm-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.llvm.outputs.identity }}
@@ -112,7 +112,7 @@ jobs:
       # the newest ccache for this OS/architecture. Compiler flags are hashed
       # by ccache, so obsolete outputs do not produce false cache hits.
       - name: Restore ccache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-${{ hashFiles('kernel.yaml', 'devices/**', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -134,14 +134,45 @@ jobs:
       # compilation fails; cancellation still cannot guarantee cache persistence.
       - name: Save ccache immediately after compilation
         if: ${{ always() && !cancelled() && steps.compile.outcome != 'skipped' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-${{ hashFiles('kernel.yaml', 'devices/**', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Package compiled kernel
+      # Save finished kernel outputs before packaging, so a broken AnyKernel3
+      # step cannot lose the Image and generated Kconfig.
+      - name: Stage compiled kernel outputs
         if: ${{ steps.compile.outcome == 'success' }}
-        run: python -m kernelforge package --device "${{ matrix.device }}"
+        run: |
+          device="${{ matrix.device }}"
+          workspace="$(python -c 'import sys; from kernelforge.cli import workspace_name; print(workspace_name(sys.argv[1]))' "$device")"
+          output=".work/$workspace/out"
+          test -s "$output/arch/arm64/boot/Image"
+          test -s "$output/.config"
+          mkdir -p "dist/compiled/$device"
+          cp "$output/arch/arm64/boot/Image" "dist/compiled/$device/Image"
+          cp "$output/.config" "dist/compiled/$device/kernel.config"
+          ls -lh "dist/compiled/$device/"
+
+      - name: Upload compiled kernel before packaging
+        if: ${{ steps.compile.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: compiled-${{ matrix.device }}-${{ github.run_number }}
+          path: dist/compiled/${{ matrix.device }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Package compiled kernel
+        id: package
+        if: ${{ always() && !cancelled() && steps.compile.outcome == 'success' }}
+        run: |
+          device="${{ matrix.device }}"
+          python -m kernelforge package --device "$device"
+          workspace="$(python -c 'import sys; from kernelforge.cli import workspace_name; print(workspace_name(sys.argv[1]))' "$device")"
+          mkdir -p "dist/packages/$device"
+          cp ".work/$workspace/DroidSpaces-$device.zip" "dist/packages/$device/"
+          ls -lh "dist/packages/$device/"
 
       - name: Report ccache performance
         if: always()
@@ -156,14 +187,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload generated AnyKernel3 ZIP and kernel images
-        uses: actions/upload-artifact@v4
+      - name: Upload packaged AnyKernel3 ZIP
+        if: ${{ always() && !cancelled() && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
         with:
           name: droidspaces-${{ matrix.device }}-${{ github.run_number }}
-          path: |
-            .work/kernel*/*.zip
-            .work/kernel*/out/arch/**/boot/Image*
-            .work/kernel*/out/.config
+          path: dist/packages/${{ matrix.device }}/DroidSpaces-${{ matrix.device }}.zip
           if-no-files-found: error
           retention-days: 14
-          include-hidden-files: true

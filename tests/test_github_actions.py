@@ -43,13 +43,13 @@ class GithubActionsTests(unittest.TestCase):
         install = next(s for s in steps if s.get("name") == "Install build dependencies and ccache")
         self.assertIn("ccache", install["run"])
         restore = next(s for s in steps if s.get("name") == "Restore ccache")
-        self.assertEqual(restore["uses"], "actions/cache/restore@v4")
+        self.assertEqual(restore["uses"], "actions/cache/restore@v6")
         self.assertIn("CCACHE_DIR", restore["with"]["path"])
         self.assertIn("github.run_id", restore["with"]["key"])
         self.assertIn("github.run_attempt", restore["with"]["key"])
         self.assertIn("restore-keys", restore["with"])
         save = next(s for s in steps if s.get("name") == "Save ccache immediately after compilation")
-        self.assertEqual(save["uses"], "actions/cache/save@v4")
+        self.assertEqual(save["uses"], "actions/cache/save@v6")
         self.assertIn("always()", save["if"])
         self.assertIn("!cancelled()", save["if"])
         self.assertEqual(save["with"]["key"], restore["with"]["key"])
@@ -60,7 +60,7 @@ class GithubActionsTests(unittest.TestCase):
         self.assertLess(save_index, package_index)
         self.assertEqual(self.data["jobs"]["build"]["env"]["CCACHE_COMPILERCHECK"], "content")
         llvm = next(s for s in steps if s.get("name") == "Restore pinned LLVM toolchain")
-        self.assertEqual(llvm["uses"], "actions/cache@v4")
+        self.assertEqual(llvm["uses"], "actions/cache@v6")
         self.assertIn("steps.llvm.outputs.identity", llvm["with"]["key"])
         self.assertIn(".work/_toolchains/kernel/llvm", llvm["with"]["path"])
 
@@ -78,13 +78,40 @@ class GithubActionsTests(unittest.TestCase):
         stats = next(s for s in steps if s.get("name") == "Report ccache performance")
         self.assertEqual(stats["if"], "always()")
         self.assertIn("GITHUB_STEP_SUMMARY", stats["run"])
-        upload = next(s for s in steps if s.get("name") == "Upload generated AnyKernel3 ZIP and kernel images")
-        self.assertEqual(upload["uses"], "actions/upload-artifact@v4")
-        self.assertIn("matrix.device", upload["with"]["name"])
-        for path in ("Image*", "*.zip", ".config"):
-            self.assertIn(path, upload["with"]["path"])
-        self.assertNotIn("dtb*", upload["with"]["path"])
-        self.assertEqual(upload["with"]["include-hidden-files"], "true")
+        stage = next(s for s in steps if s.get("name") == "Stage compiled kernel outputs")
+        self.assertIn("workspace_name", stage["run"])
+        self.assertIn('cp "$output/arch/arm64/boot/Image"', stage["run"])
+        self.assertIn('cp "$output/.config"', stage["run"])
+        self.assertIn("dist/compiled/$device/kernel.config", stage["run"])
+        compiled = next(s for s in steps if s.get("name") == "Upload compiled kernel before packaging")
+        self.assertEqual(compiled["uses"], "actions/upload-artifact@v7")
+        self.assertIn("dist/compiled/", compiled["with"]["path"])
+        self.assertNotIn(".work/", compiled["with"]["path"])
+        package_stage = next(s for s in steps if s.get("id") == "package")
+        self.assertIn("dist/packages/$device/", package_stage["run"])
+        self.assertIn("always()", package_stage["if"])
+        zip_upload = next(s for s in steps if s.get("name") == "Upload packaged AnyKernel3 ZIP")
+        self.assertEqual(zip_upload["uses"], "actions/upload-artifact@v7")
+        self.assertIn("dist/packages/", zip_upload["with"]["path"])
+        self.assertIn("DroidSpaces-", zip_upload["with"]["path"])
+        self.assertNotIn(".work/", zip_upload["with"]["path"])
+        self.assertEqual(zip_upload["with"]["if-no-files-found"], "error")
+        self.assertIn("steps.package.outcome == 'success'", zip_upload["if"])
+        self.assertLess(steps.index(stage), steps.index(compiled))
+        self.assertLess(steps.index(compiled), steps.index(package_stage))
+        self.assertLess(steps.index(package_stage), steps.index(zip_upload))
+        self.assertLess(steps.index(next(s for s in steps if s.get("name") == "Save ccache immediately after compilation")),
+                        steps.index(compiled))
+
+    def test_actions_are_latest_stable_major_versions(self):
+        for job in ("validate", "build"):
+            steps = self.data["jobs"][job]["steps"]
+            refs = [s["uses"] for s in steps if "uses" in s]
+            self.assertIn("actions/checkout@v7", refs)
+            self.assertIn("actions/setup-python@v7", refs)
+            for ref in refs:
+                self.assertNotIn("@v4", ref)
+                self.assertNotIn("@v5", ref)
 
 
 if __name__ == "__main__":
