@@ -31,17 +31,18 @@ droidspaces:
 
 overlays: []
 
-# Shared 4.19 cgroup patch. Modern-systemd backports stay optional and off.
-# Reassess compatibility with the selected kernel before enabling the backports.
+# Shared 4.19 patches. The four systemd 258-262 backports are required: probing
+# both LineageOS 24.0 trees reports the mount-ID, mount-root, AT_EMPTY_PATH and
+# faccessat2 features as missing. Keep patch order; 0004 builds on 0003.
 patches:
   - file: patches/backports-4.19/0003-statx-add-mount-ID.patch
-    enabled: false
+    enabled: true
   - file: patches/backports-4.19/0004-statx-add-mount_root.patch
-    enabled: false
+    enabled: true
   - file: patches/backports-4.19/0005-utimensat-AT_EMPTY_PATH-support.patch
-    enabled: false
+    enabled: true
   - file: patches/backports-4.19/0006-faccessat2-lineage24.patch
-    enabled: false
+    enabled: true
   - file: patches/0001-lxc-cgroup-prefix.patch
     enabled: true
 

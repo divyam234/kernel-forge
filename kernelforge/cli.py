@@ -326,7 +326,9 @@ def prepare(name, data, dry=False):
     patches = list(data.get("patches", []))
     if data["root"]["enabled"]:
         root_commit = prepare_bakasu(source, data["root"], run, dry=dry)
-        patches.append({"file": BAKASU_PATCH})
+        # Apply the BakaSU hooks before the VFS backports: both edit the include
+        # block of fs/stat.c, and this order keeps each patch's context valid.
+        patches.insert(0, {"file": BAKASU_PATCH})
     for entry in patches:
         if not entry.get("enabled", True):
             continue

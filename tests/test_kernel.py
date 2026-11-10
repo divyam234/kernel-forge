@@ -32,7 +32,7 @@ class KernelTests(unittest.TestCase):
         self.assertNotIn("VERIFY generated .config", preview)
 
 
-    def test_backports_present_and_disabled_by_default(self):
+    def test_systemd_backports_present_and_enabled(self):
         data = cli.load_config()
         backports = data["patches"][:4]
         self.assertEqual(len(backports), 4)
@@ -41,11 +41,19 @@ class KernelTests(unittest.TestCase):
         self.assertTrue(backports[2]["file"].endswith("0005-utimensat-AT_EMPTY_PATH-support.patch"))
         self.assertTrue(backports[3]["file"].endswith("0006-faccessat2-lineage24.patch"))
         self.assertEqual([p.get("enabled", True) for p in backports],
-                         [False, False, False, False])
+                         [True, True, True, True])
         self.assertTrue(data["patches"][4]["file"].endswith("0001-lxc-cgroup-prefix.patch"))
         self.assertTrue(data["patches"][4]["enabled"])
         for p in data["patches"]:
             self.assertTrue(cli.local_path(p["file"], "patch").is_file(), p["file"])
+
+    def test_patch_files_end_with_newline(self):
+        data = cli.load_config()
+        for entry in data["patches"]:
+            path = cli.local_path(entry["file"], "patch")
+            with self.subTest(patch=entry["file"]):
+                self.assertTrue(path.read_bytes().endswith(b"\n"),
+                                f"{entry['file']} must end with a newline")
 
     def test_dry_run_does_not_touch_workspace(self):
         data = cli.load_config()
@@ -54,8 +62,11 @@ class KernelTests(unittest.TestCase):
                 out = io.StringIO()
                 with redirect_stdout(out):
                     cli.prepare(cli.WORK_NAME, data, dry=True)
-                self.assertIn(" apply --check ", out.getvalue())
-                self.assertIn("COPY", out.getvalue())
+                preview = out.getvalue()
+                self.assertIn(" apply --check ", preview)
+                self.assertIn("COPY", preview)
+                self.assertLess(preview.index("0002-bakasu-manual-hooks-4.19.patch"),
+                                preview.index("0003-statx-add-mount-ID.patch"))
                 self.assertFalse((Path(tmp) / "workspace").exists())
 
     def test_reject_unmarked_workspace(self):

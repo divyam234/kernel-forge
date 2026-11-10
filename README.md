@@ -2,7 +2,7 @@
 
 **Shared `kernel.yaml` plus a small YAML file per device. DroidSpaces is mandatory for every target.**
 
-KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports and one pinned LLVM toolchain. OnePlus 9R (`lemonades`, SM8250) retains its standard AnyKernel3 ZIP. **Motorola moto g10 power (XT2127-4, LineageOS variant 2)** uses a **non-flashable Capri payload ZIP** as an intermediate for complete image generation; Actions publishes finished images for the exact November 5, 2026 LineageOS 24.0 ROM. The regular moto g10 is variant 1 of the same LineageOS `capri` build; `caprip` is a different device (moto g30). Each target uses its official LineageOS kernel source and defconfig.
+KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, enabled 4.19 backports for systemd 258–262, and one pinned LLVM toolchain. OnePlus 9R (`lemonades`, SM8250) retains its standard AnyKernel3 ZIP. **Motorola moto g10 power (XT2127-4, LineageOS variant 2)** uses a **non-flashable Capri payload ZIP** as an intermediate for complete image generation; Actions publishes finished images for the exact November 5, 2026 LineageOS 24.0 ROM. The regular moto g10 is variant 1 of the same LineageOS `capri` build; `caprip` is a different device (moto g30). Each target uses its official LineageOS kernel source and defconfig.
 
 ## Run
 
@@ -28,6 +28,8 @@ Both devices enable [BakaSU](https://github.com/Baka-SU/BakaSU) by default,
 pinned to `548d1dda060ca198823d8808804d01f5209ef4a9` in `kernel.yaml`.
 Source preparation installs it under the managed kernel checkout's `KernelSU/`
 directory and applies `patches/0002-bakasu-manual-hooks-4.19.patch`.
+The BakaSU patch is applied before the VFS backports because both edit the
+include block of `fs/stat.c`; this order keeps every patch context valid.
 `assets/bakasu.config` requests built-in `CONFIG_KSU=y`, manual syscall hooks,
 automatic LSM setuid/init-rc hooks, and the input handler. Tracepoint hooking and
 SUSFS are not enabled. The BakaSU fragment is merged after the DroidSpaces
@@ -61,7 +63,8 @@ build.sh                         Command-line entrypoint
 kernelforge/cli.py               Source / patch / config / build / package
 assets/droidspaces.config        Always included
 patches/0001-lxc-cgroup-prefix.patch
-patches/backports-4.19/          Four systemd backport patches
+patches/backports-4.19/          Four systemd 258–262 backport patches
+tools/probe-kernel.sh            Feature probe for DroidSpaces backport selection
 schema/common.schema.json        Shared kernel.yaml editor/validation schema
 schema/device.schema.json        Device override editor/validation schema
 schema/kernel.schema.json        Fully merged per-device validation schema
@@ -74,33 +77,33 @@ The `common` and `device` schemas validate the two on-disk YAML formats; the `ke
 
 The `validate` subcommand and CI still verify device YAML structure, paths, patch entries, and packaging settings. These are input checks, **not** a post-Kconfig feature gate.
 
-## Specific 4.19 backports for LineageOS 24
+## Specific 4.19 backports for systemd 258–262
 
 Source: https://github.com/Droidspaces/droidspaces-backports/tree/main/kernel-4.19-series
 
-The upstream 4.19 series has ten patches for newer systemd. The feature-probe observations below are for **SM8250 only**, not a completed probe of the Motorola kernel:
+The upstream 4.19 series has ten patches for systemd 258 through 262. The SM8250 observations are from the earlier probe; Capri was re-probed against the current LineageOS `lineage-24.0` source (Linux 4.19.325):
 
 | Patch | Feature | Already available? | Action |
 |---|---|---|---|
 | 0001 | waitid P_PIDFD | Yes | Skip |
 | 0002 | SO_BINDTOIFINDEX | Yes | Skip |
-| 0003 | statx mount ID | No | Included, disabled by default |
-| 0004 | statx mount root | No | Included, disabled by default |
-| 0005 | utimensat AT_EMPTY_PATH | No | Included, disabled by default |
-| 0006 | faccessat2 | No | Included, disabled by default |
+| 0003 | statx mount ID | No | Included, enabled |
+| 0004 | statx mount root | No | Included, enabled |
+| 0005 | utimensat AT_EMPTY_PATH | No | Included, enabled |
+| 0006 | faccessat2 | No | Included, enabled |
 | 0007–0008 | close_range | Yes | Skip |
 | 0009 | rtnetlink nexthop | Yes | Skip |
 | 0010 | x86 syscall entries | ARM64 kernel | Skip |
 
 The original 0006 patch conflicts because LineageOS 24 already has clone3 (435), close_range (436), epoll_pwait2 (441) and syscall count 442. Its adapted version changes only the missing 439 entries while keeping these pre-existing entries and counts.
 
-All four modern-systemd backports (0003–0006) are included but **disabled on both devices by default**. The enabled shared LXC cgroup patch has matching context in both vendor kernel trees. The LineageOS-specific `0006` adaptation is not automatically safe to enable on other vendors. Reprobe and port optional patches per device before using systemd 260+. The DroidSpaces userspace runtime also needs its mount-API fallback.
+All four modern-systemd backports (0003–0006) are **enabled for both devices**. Patches 0003–0005 are taken verbatim from the upstream series; 0006 is adapted for LineageOS 24. The four apply in order on the Capri tree, and upstream reports patches 1–9 applying to the SM8250 tree. The DroidSpaces userspace runtime still needs its mount-API fallback: the new mount API (`fsopen()` and friends, Linux 5.2) is intentionally not backported because it is a large VFS change, not a drop-in patch. DroidSpaces handles the missing syscalls with its seccomp/`LIBMOUNT_FORCE_MOUNT2` fallback.
 
-**When changing source kernels, re-run upstream tools/probe-kernel.sh and adjust the patches list.** Do not blindly apply all 4.19 patches to every vendor tree.
+**When changing source kernels, re-run `tools/probe-kernel.sh` and adjust the patches list.** Do not blindly apply all 4.19 patches to every vendor tree.
 
 ## Declarative patches
 
-The same `patches` list and `assets/droidspaces.config` are loaded for every device from shared `kernel.yaml`; device YAMLs **cannot override** these shared settings. Keep the modern-systemd backports disabled until tested on the selected source. A missing or failed enabled patch aborts the build.
+The same `patches` list and `assets/droidspaces.config` are loaded for every device from shared `kernel.yaml`; device YAMLs **cannot override** these shared settings. The modern-systemd backports are enabled because both LineageOS 24 source trees lack the required features. Re-probe before changing source kernels. A missing or failed enabled patch aborts the build.
 
 ~~~yaml
 droidspaces:
@@ -110,9 +113,9 @@ droidspaces:
 
 patches:
   - file: patches/backports-4.19/0003-statx-add-mount-ID.patch
-    enabled: false
-  # 0004 and 0005 also remain listed but disabled by default.
-  # 0006 faccessat2 also remains listed but disabled by default.
+    enabled: true
+  # 0004 and 0005 are also enabled; keep them after 0003.
+  # 0006 faccessat2 is the LineageOS-adapted patch and is enabled too.
   - file: patches/0001-lxc-cgroup-prefix.patch
     enabled: true
 ~~~
@@ -134,7 +137,17 @@ The checksum-verified GitHub release archive is cached and shared, while source/
 
 ## GitHub Actions and ccache
 
-GitHub Actions runs **only when manually dispatched**: commits and pull requests do **not** trigger builds. Choose `both` (default), `lemonades`, or `capri` in the existing workflow. Each run validates both configurations and executes tests before compilation. Every successful compilation uploads `compiled-<device>-<run_number>` containing `Image` and `kernel.config` **before packaging**; Capri also includes `modules.tar.gz` with its matching module binaries and ABI inputs. Capri then automatically downloads and verifies the pinned official ROM, extracts matching originals and generates `boot.img`, `vendor_boot.img`, `vendor.img` and `manifest.json`. Only successful complete generation uploads `DroidSpaces-capri-images-lineage-24.0-20261105-<run_number>`; the non-flashable payload remains an intermediate, not a published installer. `DroidSpaces-lemonades-<run_number>` still contains the unchanged standard AnyKernel3 ZIP. Artifacts have 14-day retention and are staged under visible `dist/` paths. Manual runs are independent and do not automatically cancel. GitHub Releases publishing is not enabled. No workflow flashes a phone.
+GitHub Actions runs **only when manually dispatched**: commits and pull requests do **not** trigger builds. Choose `both` (default), `lemonades`, or `capri` in the existing workflow. Each run validates both configurations and executes tests before compilation. Every successful compilation uploads `compiled-<device>-<run_number>` containing `Image` and `kernel.config` **before packaging**; Capri also includes `modules.tar.gz` with its matching module binaries and ABI inputs. Capri then automatically downloads and verifies the pinned official ROM, extracts matching originals and generates `boot.img`, `vendor_boot.img`, `vendor.img` and `manifest.json`. Only successful complete generation uploads `DroidSpaces-capri-images-lineage-24.0-20261105-<run_number>`; the non-flashable payload remains an intermediate, not a published installer. `DroidSpaces-lemonades-<run_number>` still contains the unchanged standard AnyKernel3 ZIP. Artifacts have 14-day retention and are staged under visible `dist/` paths. Manual runs are independent and do not automatically cancel. No workflow flashes a phone.
+
+Successful manual runs on `main` that include Capri also publish the four files
+to a **GitHub prerelease** tagged
+`capri-lineage-24.0-20261105-<run_number>-<run_attempt>`. A separate release job
+receives repository write permission only after the build succeeds, downloads
+the completed artifact and checks its image hashes against `manifest.json`.
+Assets are uploaded to a draft before publication, and the prerelease is not
+marked as the stable latest release. Failed/cancelled builds, OnePlus-only
+runs and other branches do not publish a release. A push alone does not run
+the workflow or publish anything.
 
 Each matrix build compiles with `-j "$(nproc)"`, using the runner's available processing units instead of hardcoded parallelism. Jobs restore the shared LLVM toolchain and device-specific ccache, then **explicitly save ccache immediately after compilation and before packaging**. Partial compilation caches are also saved on ordinary build failures; cancelled jobs cannot reliably save their cache. The compiled `Image` and config are uploaded before ZIP packaging so packaging errors cannot discard finished kernel outputs. Official GitHub Actions use checkout v7, setup-python v7, cache v6, and upload-artifact v7.
 

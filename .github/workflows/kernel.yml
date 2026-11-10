@@ -250,3 +250,56 @@ jobs:
           path: dist/packages/${{ matrix.device }}/${{ steps.package.outputs.filename }}
           if-no-files-found: error
           retention-days: 14
+
+  publish-capri-release:
+    name: Publish verified Capri images to GitHub Releases
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.ref == 'refs/heads/main' && (inputs.device == 'capri' || inputs.device == 'both') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download complete Capri image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: DroidSpaces-capri-images-lineage-24.0-20261105-${{ github.run_number }}
+          path: dist/release/capri
+
+      - name: Verify release image set
+        shell: bash
+        working-directory: dist/release/capri
+        run: |
+          for file in boot.img vendor_boot.img vendor.img manifest.json; do
+            test -s "$file"
+          done
+          jq -e '
+            .format == "kernelforge-capri-images-v1" and
+            .device == "capri" and
+            (.images | keys == ["boot.img", "vendor.img", "vendor_boot.img"])
+          ' manifest.json > /dev/null
+          jq -r '.images | to_entries[] | "\(.value.sha256)  \(.key)"' manifest.json | sha256sum -c -
+
+      - name: Publish complete image prerelease
+        shell: bash
+        working-directory: dist/release/capri
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="capri-lineage-24.0-20261105-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s\n' \
+            'Complete Capri images for lineage-24.0-20261105-nightly-capri-signed.zip only.' \
+            '' \
+            "Build commit: ${GITHUB_SHA}" \
+            "Workflow: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '' \
+            'Download all three images and manifest.json. Verify hashes before flashing.' \
+            'Manual flashing only: boot and vendor_boot in bootloader fastboot; vendor in fastbootd. Confirm the active slot and keep original ROM images for restoration.' \
+            'Do not sideload these files, relock the bootloader, or assume another ROM build is compatible. Per-image AVB checks do not establish external vbmeta trust or physical boot/hardware compatibility.' \
+            > release-notes.md
+          gh release create "$tag" boot.img vendor_boot.img vendor.img manifest.json \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Capri LineageOS 24.0 20261105 - build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --notes-file release-notes.md --draft --prerelease --latest=false
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease --latest=false

@@ -39,7 +39,7 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(capri["package"]["output"], "DroidSpaces-capri-payload.zip")
         self.assertEqual(cli.workspace_name("capri"), "kernel-capri")
 
-    def test_both_devices_share_droidspaces_and_cgroup_patch(self):
+    def test_both_devices_share_droidspaces_and_systemd_patches(self):
         oneplus = cli.load_config()
         motorola = cli.load_config("capri")
         self.assertEqual(oneplus["droidspaces"], motorola["droidspaces"])
@@ -48,7 +48,13 @@ class DeviceTests(unittest.TestCase):
         self.assertNotIn("commit", oneplus["source"])
         self.assertNotIn("commit", motorola["source"])
         enabled = [p["file"] for p in motorola["patches"] if p.get("enabled", True)]
-        self.assertEqual(enabled, ["patches/0001-lxc-cgroup-prefix.patch"])
+        self.assertEqual(enabled, [
+            "patches/backports-4.19/0003-statx-add-mount-ID.patch",
+            "patches/backports-4.19/0004-statx-add-mount_root.patch",
+            "patches/backports-4.19/0005-utimensat-AT_EMPTY_PATH-support.patch",
+            "patches/backports-4.19/0006-faccessat2-lineage24.patch",
+            "patches/0001-lxc-cgroup-prefix.patch",
+        ])
         self.assertEqual(motorola["package"]["anykernel"], oneplus["package"]["anykernel"])
         self.assertEqual(motorola["build"]["ccache"], oneplus["build"]["ccache"])
         self.assertEqual(oneplus["package"]["device"]["codenames"], ["lemonades"])
