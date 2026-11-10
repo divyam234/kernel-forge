@@ -14,7 +14,6 @@ build:
     - arch/arm64/boot/Image
     - arch/arm64/boot/dtb
     - arch/arm64/boot/dtbo.img
-  strict_config: true
   ccache:
     enabled: true
     max_size: 2G

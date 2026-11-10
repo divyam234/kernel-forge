@@ -18,7 +18,7 @@ python3 -m pip install -r requirements.txt
 ./build.sh package --device capri          # Repackage previously built capri images
 ~~~
 
-The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the **current `lineage-24.0` branch HEAD at each build** (no kernel commit pins), applies the enabled shared patches, copies the mandatory DroidSpaces fragment, merges device-specific defconfig fragments, verifies `.config`, compiles and packages AnyKernel3. Workspaces are isolated: `.work/kernel/` for lemonades and `.work/kernel-capri/` for capri. LLVM is shared at `.work/_toolchains/kernel/llvm`; ccache is shared at `.work/_ccache`. Preparation resets only the selected managed source checkout.
+The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the **current `lineage-24.0` branch HEAD at each build** (no kernel commit pins), applies enabled shared patches, copies the mandatory DroidSpaces fragment, merges device-specific defconfig fragments using the kernel's Kconfig tools, compiles, and packages AnyKernel3. KernelForge no longer compares the final `.config` against every requested symbol: Kconfig itself resolves unsupported or unavailable options. **A successful build does not prove every DroidSpaces feature is enabled**; inspect the generated `.config` and test container functionality before flashing. Workspaces are isolated: `.work/kernel/` for lemonades and `.work/kernel-capri/` for capri. LLVM is shared at `.work/_toolchains/kernel/llvm`; ccache is shared at `.work/_ccache`. Preparation resets only the selected managed source checkout.
 
 The commands are not a complete LineageOS ROM build. Integration into an Android device tree, SELinux, permissions and userspace runtime remains separate.
 
@@ -42,6 +42,8 @@ tests/                           Validation tests
 ~~~
 
 The `common` and `device` schemas validate the two on-disk YAML formats; the `kernel` schema validates the resolved merge. All three are exercised by the test suite.
+
+The `validate` subcommand and CI still verify device YAML structure, paths, patch entries, and packaging settings. These are input checks, **not** a post-Kconfig feature gate.
 
 ## Specific 4.19 backports for LineageOS 24
 

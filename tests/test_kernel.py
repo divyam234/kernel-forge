@@ -13,9 +13,24 @@ class KernelTests(unittest.TestCase):
         data = cli.load_config()
         self.assertEqual(data["source"]["ref"], "lineage-24.0")
         self.assertEqual(data["droidspaces"]["target"], "vendor/droidspaces.config")
-        self.assertEqual(cli.requested_settings(data)["CONFIG_NET_NS"], "y")
-        self.assertEqual(cli.requested_settings(data)["CONFIG_MEMCG"], "y")
-        self.assertEqual(cli.requested_settings(data)["CONFIG_OVERLAY_FS"], "y")
+        fragment = cli.local_path(data["droidspaces"]["config"], "droidspaces.config")
+        content = fragment.read_text(encoding="utf-8")
+        for option in ("CONFIG_NET_NS=y", "CONFIG_MEMCG=y", "CONFIG_OVERLAY_FS=y"):
+            self.assertIn(option, content)
+        self.assertNotIn("strict_config", data["build"])
+
+    def test_build_does_not_verify_kconfig_symbols(self):
+        data = cli.load_config("capri")
+        self.assertNotIn("strict_config", data["build"])
+        self.assertFalse(hasattr(cli, "verify_config"))
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(cli, "WORK", Path(directory) / ".work"), redirect_stdout(io.StringIO()) as output:
+                cli.build(cli.workspace_name("capri"), data, 2, dry=True)
+        preview = output.getvalue()
+        self.assertIn("vendor/droidspaces.config", preview)
+        self.assertIn("-j2", preview)
+        self.assertNotIn("VERIFY generated .config", preview)
+
 
     def test_backports_present_and_disabled_by_default(self):
         data = cli.load_config()

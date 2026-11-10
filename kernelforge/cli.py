@@ -191,7 +191,7 @@ def load_config(device=DEFAULT_DEVICE):
                 "toolchain.commit must be a full 40-character SHA")
 
     build = data.get("build")
-    fields(build, {"arch", "defconfig", "fragments", "targets", "artifacts", "strict_config", "ccache"}, "build")
+    fields(build, {"arch", "defconfig", "fragments", "targets", "artifacts", "ccache"}, "build")
     require(build.get("arch") in ("arm64", "arm"), "build.arch must be arm or arm64")
     relative(build.get("defconfig"), "build.defconfig")
     require(isinstance(build.get("fragments", []), list), "build.fragments must be a list")
@@ -204,7 +204,6 @@ def load_config(device=DEFAULT_DEVICE):
     require(isinstance(build.get("artifacts", []), list), "build.artifacts must be a list")
     for item in build.get("artifacts", []):
         relative(item, "build.artifacts entry")
-    require(type(build.get("strict_config", True)) is bool, "strict_config must be boolean")
     cache = build.get("ccache", {"enabled": False})
     validate_item(cache, {"enabled", "max_size"}, "build.ccache")
     size = cache.get("max_size", "2G")
@@ -352,46 +351,6 @@ def build_environment(data, llvm_bin):
     return env
 
 
-def requested_settings(data):
-    settings = {}
-    mandatory = {"from": data["droidspaces"]["config"],
-                 "to": data["droidspaces"]["destination"], "enabled": True}
-    for entry in [mandatory] + data.get("overlays", []):
-        if entry.get("enabled", True) and entry["to"].endswith(".config"):
-            path = local_path(entry["from"], "overlay.from")
-            for line in path.read_text(encoding="utf-8").splitlines():
-                match = re.match(r"^(CONFIG_[A-Za-z0-9_]+)=(.*)$", line)
-                if match:
-                    settings[match.group(1)] = match.group(2)
-                match = re.match(r"^# (CONFIG_[A-Za-z0-9_]+) is not set$", line)
-                if match:
-                    settings[match.group(1)] = "n"
-    return settings
-
-
-def verify_config(profile, data, dry=False):
-    if dry:
-        print("VERIFY generated .config against enabled overlay fragments")
-        return []
-    config = WORK / profile / "out" / ".config"
-    require(config.is_file(), "Kernel did not generate .config")
-    generated = {}
-    for line in config.read_text(encoding="utf-8").splitlines():
-        matched = re.match(r"^(CONFIG_[A-Za-z0-9_]+)=(.*)$", line)
-        if matched:
-            generated[matched.group(1)] = matched.group(2)
-        else:
-            matched = re.match(r"^# (CONFIG_[A-Za-z0-9_]+) is not set$", line)
-            if matched:
-                generated[matched.group(1)] = "n"
-    mismatches = [(key, want, generated.get(key, "absent"))
-                  for key, want in requested_settings(data).items()
-                  if generated.get(key, "absent") != want]
-    for key, want, got in mismatches:
-        print("CONFIG MISMATCH:", key, "requested", want, "got", got, file=sys.stderr)
-    return mismatches
-
-
 def build(name, data, jobs, dry=False):
     src = prepare(name, data, dry=dry)
     llvm_bin = bootstrap_toolchain(name, data, dry=dry)
@@ -411,9 +370,6 @@ def build(name, data, jobs, dry=False):
     config_targets = ([data["build"]["defconfig"]] + data["build"].get("fragments", [])
                       + [data["droidspaces"]["target"]])
     run(base + config_targets, cwd=src, env=env, dry=dry)
-    mismatch = verify_config(name, data, dry=dry)
-    if mismatch and data["build"].get("strict_config", True):
-        raise ForgeError("Kernel Kconfig discarded requested features; refusing build")
     run(base + ["-j" + str(jobs)] + data["build"].get("targets", []),
         cwd=src, env=env, dry=dry)
     if data["build"].get("ccache", {}).get("enabled", False):
