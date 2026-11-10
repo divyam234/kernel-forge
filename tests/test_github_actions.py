@@ -13,12 +13,11 @@ class GithubActionsTests(unittest.TestCase):
         # BaseLoader preserves GitHub's YAML 'on' mapping key.
         cls.data = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
-    def test_build_runs_on_main_and_manual_dispatch(self):
+    def test_build_runs_only_on_manual_dispatch(self):
         events = self.data["on"]
-        self.assertIn("workflow_dispatch", events)
-        self.assertEqual(events["push"]["branches"], ["main"])
-        self.assertIn("pull_request", events)
-        self.assertIn("github.event_name == 'push'", self.data["jobs"]["build"]["if"])
+        self.assertEqual(set(events), {"workflow_dispatch"})
+        self.assertNotIn("if", self.data["jobs"]["build"])
+        self.assertEqual(self.data["concurrency"]["cancel-in-progress"], "false")
         self.assertEqual(self.data["jobs"]["build"]["strategy"]["matrix"]["device"],
                          "${{ fromJSON(needs.validate.outputs.devices) }}")
     def test_manual_dispatch_selects_one_or_both_devices(self):
