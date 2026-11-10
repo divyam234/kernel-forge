@@ -148,6 +148,11 @@ jobs:
           mkdir -p "dist/compiled/$device"
           cp "$output/arch/arm64/boot/Image" "dist/compiled/$device/Image"
           cp "$output/.config" "dist/compiled/$device/kernel.config"
+          if test "$device" = capri; then
+            # Preserve the exact modules and ABI inputs even if packaging fails.
+            python -c 'import sys; from pathlib import Path; from kernelforge.modules import archive_modules; archive_modules(Path(sys.argv[1]), Path(sys.argv[2]))' \
+              "$output" "dist/compiled/$device/modules.tar.gz"
+          fi
           ls -lh "dist/compiled/$device/"
 
       - name: Upload compiled kernel before packaging

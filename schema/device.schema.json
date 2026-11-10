@@ -204,6 +204,24 @@
             }
           }
         },
+        "modules": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["vendor_boot"],
+          "properties": {
+            "aliases": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*\\.ko$"},
+              "additionalProperties": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*\\.ko$"}
+            },
+            "vendor_boot": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*\\.ko$"}
+            }
+          }
+        },
         "images": {
           "type": "object",
           "minProperties": 1,

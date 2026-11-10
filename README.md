@@ -22,6 +22,37 @@ The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the **c
 
 The commands are not a complete LineageOS ROM build. Integration into an Android device tree, SELinux, permissions and userspace runtime remains separate.
 
+## Built-in BakaSU root
+
+Both devices enable [BakaSU](https://github.com/Baka-SU/BakaSU) by default,
+pinned to `548d1dda060ca198823d8808804d01f5209ef4a9` in `kernel.yaml`.
+Source preparation installs it under the managed kernel checkout's `KernelSU/`
+directory and applies `patches/0002-bakasu-manual-hooks-4.19.patch`.
+`assets/bakasu.config` requests built-in `CONFIG_KSU=y`, manual syscall hooks,
+automatic LSM setuid/init-rc hooks, and the input handler. Tracepoint hooking and
+SUSFS are not enabled. The BakaSU fragment is merged after the DroidSpaces
+fragment; DroidSpaces features, including `CONFIG_SYSVIPC`, remain requested.
+
+Install the matching **BakaSU manager APK**, then explicitly grant root to the
+apps that need it. The kernel ZIP does not install the manager or grant apps
+root automatically. Use the upstream [manager installation instructions](https://bakasu.org/guide/install/);
+they currently point to development manager builds. Built-in BakaSU does not
+require Magisk boot-image patching or a separate KernelSU loadable module.
+Existing AnyKernel3 handling of an already patched boot image is unchanged.
+
+Set `root.enabled: false` in shared `kernel.yaml` before rebuilding to omit
+BakaSU, its hooks, and its config fragment. Repackaging an existing kernel
+cannot enable or disable built-in root.
+
+Verification: the manual-hook patch applies to both inspected LineageOS 24.0
+4.19 source snapshots and passes the pinned BakaSU hook-presence checker.
+CLI validation and default-root build previews also pass. These checks are
+**not** a full kernel compilation, final Kconfig verification, or device root
+test. Inspect the built `.config` for `CONFIG_KSU=y` and
+`CONFIG_KSU_MANUAL_HOOK=y`, then verify manager recognition, app approval, and
+root access on the device before treating either ZIP as validated.
+
+
 ## Layout
 
 ~~~text
@@ -105,7 +136,7 @@ The checksum-verified GitHub release archive is cached and shared, while source/
 
 ## GitHub Actions and ccache
 
-GitHub Actions runs **only when manually dispatched**: commits pushed to `main` and pull requests do **not** trigger validation or builds. Go to **Actions → KernelForge → Run workflow** and choose `both` (default), `lemonades`, or `capri`; the requested device jobs compile. Each manual run validates both configurations and executes tests before building the selected device(s). Every successful compilation uploads an early `compiled-<device>-<run_number>` artifact containing `Image` and `kernel.config` **before AnyKernel3 packaging**. When packaging succeeds, a separate `droidspaces-<device>-<run_number>` artifact contains the flashable ZIP. Both have 14-day retention. Files are staged under visible `dist/` paths because `actions/upload-artifact` ignores files inside hidden `.work/` by default. Manual runs have independent workflow concurrency groups and are not automatically cancelled. GitHub Releases publishing is not enabled.
+GitHub Actions runs **only when manually dispatched**: commits pushed to `main` and pull requests do **not** trigger validation or builds. Go to **Actions → KernelForge → Run workflow** and choose `both` (default), `lemonades`, or `capri`; the requested device jobs compile. Each manual run validates both configurations and executes tests before building the selected device(s). Every successful compilation uploads an early `compiled-<device>-<run_number>` artifact containing `Image` and `kernel.config` **before AnyKernel3 packaging**; Capri also includes `modules.tar.gz` with its matching module binaries and ABI inputs. When packaging succeeds, a separate `droidspaces-<device>-<run_number>` artifact contains the flashable ZIP. Both have 14-day retention. Files are staged under visible `dist/` paths because `actions/upload-artifact` ignores files inside hidden `.work/` by default. Manual runs have independent workflow concurrency groups and are not automatically cancelled. GitHub Releases publishing is not enabled.
 
 Each matrix build compiles with `-j "$(nproc)"`, using the runner's available processing units instead of hardcoded parallelism. Jobs restore the shared LLVM toolchain and device-specific ccache, then **explicitly save ccache immediately after compilation and before packaging**. Partial compilation caches are also saved on ordinary build failures; cancelled jobs cannot reliably save their cache. The compiled `Image` and config are uploaded before ZIP packaging so packaging errors cannot discard finished kernel outputs. Official GitHub Actions use checkout v7, setup-python v7, cache v6, and upload-artifact v7. Capri has completed compilation and packaging on GitHub Actions, but physical boot remains unverified.
 
@@ -130,37 +161,66 @@ KernelForge invokes `CC=ccache clang`, `HOSTCC=ccache clang`, and `HOSTCXX=ccach
 
 ## Device-specific AnyKernel3 packaging
 
-`kernel.yaml` provides the pinned AnyKernel3 template, common boot policy and `device_check: false`. Each `devices/<codename>.yaml` supplies the name, codename, Android version, kernel source, defconfig and image mapping. The generator creates `anykernel.sh` from the selected device rather than editing hardcoded scripts. For example, `devices/capri.yaml` contains:
+`kernel.yaml` supplies the pinned AnyKernel3 template and common boot policy.
+`devices/<codename>.yaml` supplies the source, configuration, image mapping and
+installation policy. Source branches still track their latest `lineage-24.0`
+head; adding matched modules does not disable DroidSpaces features such as
+`CONFIG_SYSVIPC` and does not relax module CRC checks.
 
-~~~yaml
-source:
-  url: https://github.com/LineageOS/android_kernel_motorola_sm6225.git
-  ref: lineage-24.0
-  # Always track the latest lineage-24.0 branch head.
-build:
-  defconfig: vendor/bengal-perf_defconfig
-  fragments:
-    - vendor/ext_config/moto-bengal.config
-    - vendor/ext_config/capri-default.config
-  artifacts:
-    - arch/arm64/boot/Image
-package:
-  output: DroidSpaces-capri.zip
-  device:
-    name: Motorola moto g10 power
-    codenames: [capri]
-    android_versions: ["17"]
-  images:
-    arch/arm64/boot/Image: Image
-~~~
+| Target | ZIP contents and installation |
+|---|---|
+| `lemonades` | Kernel `Image` only; existing boot/slot policy is unchanged. |
+| `capri` | Kernel plus every module in `modules.order`; updates active-slot `boot`, `/vendor/lib/modules`, and the early modules in active-slot `vendor_boot`. Codename checking is required. |
 
-Generated installers default to `do.devicecheck=0` for both devices. Set `package.device_check: true` in shared `kernel.yaml` to enforce codenames; with the default off, the installer will **not** protect against accidentally flashing a ZIP on a different phone. Both use `boot` and automatic slot detection without Magisk. **Both devices now package only the kernel `Image`**, retaining the installed DTB and DTBO rather than shipping replacement images. This requires the new kernel to stay compatible with the current ROM's device-tree data. The official `capri-default.config` sets `CONFIG_CAPRI_DTB=y` for both G10 variants; **do not switch to `CONFIG_CAPRIP_DTB`**, which belongs to moto g30. AnyKernel3's ability to preserve the installed boot header v3, device-tree data and the matched vendor_boot/dtbo partitions still requires real-device testing on XT2127-4. **Never cross-flash** ZIPs between capri and lemonades.
+Capri's `package.modules.aliases` follows the official LineageOS
+[`TARGET_MODULE_ALIASES`](https://github.com/LineageOS/android_device_motorola_sm6225-common/blob/lineage-24.0/BoardConfigCommon.mk).
+The inspected November 5 ROM contains 43 modules, including 29 renamed files.
+`package.modules.vendor_boot` selects `nova_0flash_mmi`, `ili9882_mmi`, and `exfat`,
+in that order, for normal early boot. Their copies in both module locations must
+match the kernel. This policy is specific to Capri; do not copy another device's
+empty `modules.load` or recovery-only load list.
 
-**Moto g10 power verification before flashing:** confirm model `XT2127-4` and device codename `capri` (`adb shell getprop ro.product.device`); confirm the required Android 11 stock firmware baseline from the [LineageOS 24.0 variant-2 installation guide](https://lineageos.github.io/lineage_wiki/devices/capri/install/variant2/); retain matching boot/vendor_boot/dtbo images and a recovery method. The Power model has a 6000 mAh battery versus 5000 mAh on the regular G10, but LineageOS uses the same `capri` source/configuration, so **no separate Power-specific kernel fragment** is required.
+Packaging requires the complete output tree: `Image`, `modules.order`, every
+listed `.ko`, `Module.symvers`, and `include/config/kernel.release`. It verifies
+module release strings, imported symbol CRCs and dependency closure before
+staging. LLVM strips debug information from staged copies, not build originals;
+already-signed modules cannot be stripped this way. Installed filenames,
+dependency/alias metadata and checksum manifests are generated together.
+The existing vendor `modules.load` is not replaced.
 
-For another device, create `devices/<codename>.yaml` with source URL and branch ref (no pinned kernel SHA), defconfig/fragments, and AnyKernel3 device/output/images. Verify its kernel config, cgroup patch applicability, boot partition, DTB/DTBO format and recovery plan. A ZIP alone does not prove flash compatibility.
+The recovery-only installer checks the active slot, vendor filesystem, module
+coverage, payload checksums and vendor boot header v3 before changing the kernel.
+It installs the matched vendor files with checked writes, updates `boot`, then
+repackages `vendor_boot` with the selected early modules. Partition readback and
+module checksums detect failed writes; shell failures attempt to restore the
+original boot images and vendor files together. Temporary backups are retained
+on failure. **This is not power-loss-atomic. Keep external backups and a working
+recovery/fastboot restore method.**
 
-Generated ZIPs are testing artifacts until a complete kernel build and physical boot pass. Rebuild packaging with `./build.sh package --device capri` or `--device lemonades`.
+No replacement DTB or DTBO is shipped. The installer retains unrelated ramdisk
+contents and verifies the vendor boot DTB is unchanged. The kernel must remain
+compatible with the ROM's device-tree data. Keep `CONFIG_CAPRI_DTB=y`; `CAPRIP`
+belongs to the Moto G30 and is not a G10 Power variant.
+
+**Before installing on Moto G10 Power:** confirm model `XT2127-4`, codename
+`capri`, the LineageOS 24.0 Android 11 firmware baseline, and matching ROM images
+from the [official variant-2 guide](https://lineageos.github.io/lineage_wiki/devices/capri/install/variant2/).
+Use a compatible recovery that exposes the active vendor partition as ext4 and
+can safely remount it writable. Verified/unsupported mappings, missing modules
+and failed remounts must abort; the installer does not disable AVB or force-load
+modules. Installation from a booted Android kernel-manager app is unsupported.
+Never cross-flash Capri and OnePlus ZIPs.
+
+Rebuild with `./build.sh build --device capri -j 8`, or repackage a complete
+existing output tree with `./build.sh package --device capri`. GitHub Actions
+retains Capri's modules and ABI inputs as `modules.tar.gz` alongside `Image` and
+`kernel.config` **before** ZIP packaging. The earlier image-only downloads do
+not contain the module set and cannot be repaired by repacking alone.
+
+This follows the [Moto G84 matched-module installer pattern](https://github.com/humandroid-2002/AnyKernel3/tree/sm6375),
+with Capri's actual filenames and normal early-load policy. Local packaging and
+image-repacking checks do not establish physical boot compatibility; generated
+ZIPs remain testing artifacts until a device boot and hardware check pass.
 
 ## Source credits
 

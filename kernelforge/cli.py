@@ -18,6 +18,9 @@ import zipfile
 
 import yaml
 
+from .modules import ModuleError, stage_modules
+from .root import RootError, prepare_bakasu
+
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 CONFIG = ROOT / "kernel.yaml"
@@ -25,9 +28,11 @@ DEVICES = ROOT / "devices"
 DEFAULT_DEVICE = "lemonades"
 WORK_NAME = "kernel"
 SHA = re.compile(r"^[a-f0-9]{40}$")
-SUPPORTED = {"apiVersion", "source", "toolchain", "build", "droidspaces", "overlays", "patches", "package"}
+SUPPORTED = {"apiVersion", "source", "toolchain", "root", "build", "droidspaces", "overlays", "patches", "package"}
 LLVM_TOOLS = ("clang", "clang++", "ld.lld", "llvm-ar", "llvm-nm",
               "llvm-objcopy", "llvm-objdump", "llvm-readelf", "llvm-size", "llvm-strip")
+BAKASU_PATCH = "patches/0002-bakasu-manual-hooks-4.19.patch"
+BAKASU_TARGET = "vendor/bakasu.config"
 
 
 class ForgeError(Exception):
@@ -68,7 +73,7 @@ def validate_item(item, allowed, label):
 
 def validate_package(cfg):
     """Validate AnyKernel3 configuration before any Git or filesystem changes."""
-    fields(cfg, {"type", "output", "device_check", "device", "anykernel", "boot", "images"}, "package")
+    fields(cfg, {"type", "output", "device_check", "device", "anykernel", "boot", "images", "modules"}, "package")
     require(cfg.get("type") == "anykernel3", "package.type must be anykernel3")
     output = cfg.get("output")
     require(isinstance(output, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.zip", output)),
@@ -113,6 +118,25 @@ def validate_package(cfg):
             "package.boot.vbmeta must be auto, '0' or '1'")
     require(boot.get("install") in ("write_boot", "flash_boot"),
             "package.boot.install must be write_boot or flash_boot")
+    if "modules" in cfg:
+        modules = cfg["modules"]
+        fields(modules, {"aliases", "vendor_boot"}, "package.modules")
+        require(cfg.get("device_check") is True,
+                "Matched-module installation requires package.device_check: true")
+        require(boot["partition"] == "boot" and boot["install"] == "write_boot" and
+                boot["slots"] in ("auto", "ab"),
+                "Matched modules require slotted boot with write_boot installation")
+        aliases = modules.get("aliases", {})
+        require(isinstance(aliases, dict), "package.modules.aliases must be a mapping")
+        early = modules.get("vendor_boot")
+        require(isinstance(early, list) and early and
+                all(isinstance(name, str) for name in early) and
+                len(early) == len(set(early)),
+                "package.modules.vendor_boot must list unique early module filenames")
+        for filename in [*aliases, *aliases.values(), *early]:
+            require(isinstance(filename, str) and
+                    bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*\.ko", filename)),
+                    "Module names must be plain .ko filenames")
 
     images = cfg.get("images")
     require(isinstance(images, dict) and bool(images),
@@ -125,12 +149,16 @@ def validate_package(cfg):
     for src, dst in images.items():
         relative(src, "package image source")
         path = relative(dst, "package image destination")
-        require(path.parts[0] not in ("tools", "META-INF", "modules", "ramdisk", "patch") and
+        require(path.parts[0] not in ("tools", "META-INF", "modules", "ramdisk", "patch",
+                                     "module-files", "boot-files", "vendor_boot-files") and
                 path.as_posix() != "anykernel.sh",
                 "package.images cannot overwrite AnyKernel3 installer files")
         destinations.append(path.as_posix())
     require(len(destinations) == len(set(destinations)),
             "package.images ZIP destinations must be unique")
+    if "modules" in cfg:
+        require(len(destinations) == 1 and destinations[0] == "Image",
+                "Matched-module packages replace only Image and preserve installed DTB/DTBO")
 
 
 def merge_settings(common, device):
@@ -183,6 +211,15 @@ def load_config(device=DEFAULT_DEVICE):
     require(isinstance(src.get("url"), str) and src["url"].startswith("https://"),
             "source.url must be an HTTPS Git URL")
     require(isinstance(src.get("ref"), str) and bool(src["ref"]), "source.ref is required")
+    root = data.get("root")
+    fields(root, {"enabled", "url", "ref", "commit"}, "root")
+    require(type(root.get("enabled")) is bool, "root.enabled must be boolean")
+    require(isinstance(root.get("url"), str) and root["url"].startswith("https://"),
+            "root.url must be an HTTPS Git URL")
+    require(isinstance(root.get("ref"), str) and bool(root["ref"]), "root.ref is required")
+    require(isinstance(root.get("commit"), str) and bool(SHA.fullmatch(root["commit"])),
+            "root.commit must be a pinned 40-character BakaSU SHA")
+
 
     tc = data.get("toolchain")
     fields(tc, {"url", "ref", "commit", "directory", "sha256"}, "toolchain")
@@ -281,7 +318,12 @@ def fetch_source(name, data, dry=False):
 
 def prepare(name, data, dry=False):
     source, commit = fetch_source(name, data, dry)
-    for entry in data.get("patches", []):
+    root_commit = None
+    patches = list(data.get("patches", []))
+    if data["root"]["enabled"]:
+        root_commit = prepare_bakasu(source, data["root"], run, dry=dry)
+        patches.append({"file": BAKASU_PATCH})
+    for entry in patches:
         if not entry.get("enabled", True):
             continue
         patch = local_path(entry["file"], "patch.file")
@@ -290,7 +332,11 @@ def prepare(name, data, dry=False):
         run(["git", "-C", str(source), "apply", str(patch)], dry=dry)
     mandatory = {"from": data["droidspaces"]["config"],
                  "to": data["droidspaces"]["destination"], "enabled": True}
-    for entry in [mandatory] + data.get("overlays", []):
+    overlays = [mandatory]
+    if data["root"]["enabled"]:
+        overlays.append({"from": "assets/bakasu.config",
+                         "to": "arch/arm64/configs/" + BAKASU_TARGET})
+    for entry in overlays + data.get("overlays", []):
         if not entry.get("enabled", True):
             continue
         origin = local_path(entry["from"], "overlay.from")
@@ -304,8 +350,9 @@ def prepare(name, data, dry=False):
             shutil.copyfile(origin, dest)
     if not dry:
         state = {"source": data["source"]["url"], "ref": data["source"]["ref"],
-                 "commit": commit, "patches": [p["file"] for p in data.get("patches", [])
-                                              if p.get("enabled", True)]}
+                 "commit": commit, "patches": [p["file"] for p in patches if p.get("enabled", True)],
+                 "root": {"enabled": True, "provider": "BakaSU", "commit": root_commit}
+                         if root_commit else {"enabled": False}}
         (WORK / name / "prepared.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     return source
 
@@ -417,9 +464,13 @@ def build(name, data, jobs, dry=False):
                      "HOSTCXX=ccache clang++"])
     config_targets = ([data["build"]["defconfig"]] + data["build"].get("fragments", [])
                       + [data["droidspaces"]["target"]])
+    if data["root"]["enabled"]:
+        config_targets.append(BAKASU_TARGET)
     run(base + config_targets, cwd=src, env=env, dry=dry)
     run(base + ["-j" + str(jobs)] + data["build"].get("targets", []),
         cwd=src, env=env, dry=dry)
+    if "modules" in data["package"] and data["build"].get("targets") and "modules" not in data["build"]["targets"]:
+        run(base + ["-j" + str(jobs), "modules"], cwd=src, env=env, dry=dry)
     if data["build"].get("ccache", {}).get("enabled", False):
         run(["ccache", "--show-stats"], env=env, dry=dry)
     if not dry:
@@ -457,6 +508,12 @@ def render_anykernel(cfg):
     slot = {"auto": "auto", "ab": "1", "single": "0"}[boot["slots"]]
     install = ("dump_boot;\nwrite_boot;" if boot["install"] == "write_boot" else
                "split_boot;\nflash_boot;\nflash_dtbo;")
+    if "modules" in cfg:
+        install = (". tools/install-modules.sh;\nkernelforge_begin_install;\n"
+                   "dump_boot;\nwrite_boot;\nkernelforge_check_boot;\n"
+                   "BLOCK=vendor_boot;\nreset_ak;\ndump_boot;\n"
+                   "kernelforge_prepare_vendor_boot;\nwrite_boot;\n"
+                   "kernelforge_finish_install;")
     return (f"### Generated by KernelForge from kernel.yaml; do not edit in ZIP.\n"
             f"## AnyKernel3 installer, based on osm0sis/AnyKernel3.\n"
             f"properties() {{ '\n"
@@ -484,6 +541,8 @@ def package(name, data, dry=False):
     if dry:
         for src, dst in cfg["images"].items():
             print("IMAGE", src, "->", dst)
+        if "modules" in cfg:
+            print("MODULES modules.order -> vendor/lib/modules and vendor_boot ramdisk")
         return artifact
 
     require((template / "tools" / "ak3-core.sh").is_file(),
@@ -508,6 +567,13 @@ def package(name, data, dry=False):
         require(dest.is_relative_to(staging.resolve()), "Unsafe AnyKernel3 destination")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, dest)
+    if "modules" in cfg:
+        llvm_bin = bootstrap_toolchain(name, data)
+        stage_modules(out, staging, cfg["modules"], strip_tool=llvm_bin / "llvm-strip")
+        boot_files = staging / "boot-files"
+        boot_files.mkdir()
+        shutil.move(str(staging / "Image"), boot_files / "Image")
+        shutil.copyfile(ROOT / "assets/install-modules.sh", staging / "tools/install-modules.sh")
 
     with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED,
                          compresslevel=9) as zf:
@@ -553,7 +619,7 @@ def main(argv=None):
         elif opts.command == "package":
             package(name, data, dry=opts.dry_run)
         return 0
-    except (ForgeError, subprocess.CalledProcessError, OSError, yaml.YAMLError) as exc:
+    except (ForgeError, ModuleError, RootError, subprocess.CalledProcessError, OSError, yaml.YAMLError) as exc:
         print("ERROR:", str(exc), file=sys.stderr)
         return 1
 

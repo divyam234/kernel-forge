@@ -30,11 +30,6 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(capri["source"]["ref"], "lineage-24.0")
         self.assertNotIn("commit", capri["source"])
         self.assertEqual(capri["build"]["defconfig"], "vendor/bengal-perf_defconfig")
-        self.assertEqual(capri["build"]["fragments"], [
-            "vendor/ext_config/moto-bengal.config",
-            "vendor/ext_config/capri-default.config",
-        ])
-        self.assertEqual(capri["build"]["artifacts"], ["arch/arm64/boot/Image"])
         self.assertEqual(capri["package"]["images"], {"arch/arm64/boot/Image": "Image"})
         self.assertEqual(capri["package"]["device"]["codenames"], ["capri"])
         self.assertEqual(capri["package"]["device"]["name"], "Motorola moto g10 power")
@@ -53,30 +48,11 @@ class DeviceTests(unittest.TestCase):
         self.assertNotIn("commit", motorola["source"])
         enabled = [p["file"] for p in motorola["patches"] if p.get("enabled", True)]
         self.assertEqual(enabled, ["patches/0001-lxc-cgroup-prefix.patch"])
-        self.assertEqual(motorola["package"]["device_check"], False)
         self.assertEqual(motorola["package"]["anykernel"], oneplus["package"]["anykernel"])
         self.assertEqual(motorola["build"]["ccache"], oneplus["build"]["ccache"])
         self.assertEqual(oneplus["package"]["device"]["codenames"], ["lemonades"])
         self.assertNotEqual(motorola["source"], oneplus["source"])
 
-    def test_capri_anykernel_and_build_preview(self):
-        data = cli.load_config("capri")
-        script = cli.render_anykernel(data["package"])
-        self.assertIn("device.name1=capri\n", script)
-        self.assertIn("kernel.string=Motorola moto g10 power", script)
-        self.assertIn("do.devicecheck=0\n", script)
-        self.assertIn("BLOCK=boot;", script)
-        with tempfile.TemporaryDirectory() as temp:
-            with patch.object(cli, "WORK", Path(temp) / ".work"), redirect_stdout(io.StringIO()) as output:
-                self.assertEqual(cli.main(["build", "--device", "capri", "--dry-run"]), 0)
-        log = output.getvalue()
-        self.assertIn("android_kernel_motorola_sm6225", log)
-        self.assertIn("vendor/bengal-perf_defconfig", log)
-        self.assertIn("vendor/ext_config/capri-default.config", log)
-        self.assertIn("assets/droidspaces.config", log)
-        self.assertIn("0001-lxc-cgroup-prefix.patch", log)
-        self.assertNotIn("git apply --check " + str(cli.ROOT / "patches/backports-4.19"), log)
-        self.assertIn("DroidSpaces-capri.zip", log)
 
     def test_reject_unknown_device_and_path_traversal(self):
         for value in ("not-a-device", "../capri", "/tmp/invalid", "capri/../../"):

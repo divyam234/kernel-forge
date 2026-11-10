@@ -1,0 +1,185 @@
+From: KernelForge <kernelforge@localhost>
+Subject: [PATCH] Integrate BakaSU manual hooks for LineageOS 4.19
+
+Use the pinned BakaSU manual exec entry point and modern post hook on
+both successful and failed exec, while the filename is still alive.
+Kernel file-based exec has no filename and must bypass these hooks.
+Hook native stat and ARM64 compat stat64 returns only after a successful
+copy to userspace. Keep all references behind the built-in-only manual
+hook option. Automatic LSM and input hooks need no kernel edits.
+
+BakaSU: 548d1dda060ca198823d8808804d01f5209ef4a9
+
+diff --git a/fs/exec.c b/fs/exec.c
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -72,6 +72,14 @@
+ 
+ #include <trace/events/sched.h>
+ 
++#ifdef CONFIG_KSU_MANUAL_HOOK
++extern int ksu_handle_execveat(int *fd, struct filename **filename,
++			     void *argv, void *envp, int *flags);
++extern int ksu_handle_post_execve_common(int *fd, const char **filename,
++				 void *argv, void *envp, int *flags,
++				 int *retval);
++#endif
++
+ int suid_dumpable = 0;
+ 
+ static LIST_HEAD(formats);
+@@ -1740,6 +1748,12 @@
+ 
+ 	if (IS_ERR(filename))
+ 		return PTR_ERR(filename);
++
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	/* Kernel file-based exec has no filename for the manual hooks. */
++	if (filename)
++		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
++#endif
+ 
+ 	/*
+ 	 * We move the actual failure in case of RLIMIT_NPROC excess from
+@@ -1866,6 +1880,11 @@
+ 	task_numa_free(current, false);
+ 	free_bprm(bprm);
+ 	kfree(pathbuf);
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	if (filename)
++		ksu_handle_post_execve_common(&fd, &filename->name, &argv,
++					      &envp, &flags, &retval);
++#endif
+ 	if (filename)
+ 		putname(filename);
+ 	if (displaced)
+@@ -1890,6 +1909,11 @@
+ 	if (displaced)
+ 		reset_files_struct(displaced);
+ out_ret:
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	if (filename)
++		ksu_handle_post_execve_common(&fd, &filename->name, &argv,
++					      &envp, &flags, &retval);
++#endif
+ 	if (filename)
+ 		putname(filename);
+ 	return retval;
+diff --git a/fs/open.c b/fs/open.c
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -35,6 +35,11 @@
+ #include "internal.h"
+ #include <trace/hooks/syscall_check.h>
+ 
++#ifdef CONFIG_KSU_MANUAL_HOOK
++extern int ksu_handle_faccessat(int *dfd, const char __user **filename,
++			      int *mode, int *flags);
++#endif
++
+ int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
+ 		unsigned int time_attrs, struct file *filp)
+ {
+@@ -363,6 +368,10 @@
+ 	struct vfsmount *mnt;
+ 	int res;
+ 	unsigned int lookup_flags = LOOKUP_FOLLOW;
++
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
++#endif
+ 
+ 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
+ 		return -EINVAL;
+diff --git a/fs/stat.c b/fs/stat.c
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -20,6 +20,16 @@
+ 
+ #include <linux/uaccess.h>
+ #include <asm/unistd.h>
++
++#ifdef CONFIG_KSU_MANUAL_HOOK
++extern int ksu_handle_stat(int *dfd, const char __user **filename, int *flags);
++extern void ksu_handle_newfstat_ret(unsigned int *fd,
++				  struct stat __user **statbuf);
++#if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
++extern void ksu_handle_fstat64_ret(unsigned long *fd,
++				 struct stat64 __user **statbuf);
++#endif
++#endif
+ 
+ /**
+  * generic_fillattr - Fill in the basic attributes from the inode struct
+@@ -360,6 +370,10 @@
+ 	struct kstat stat;
+ 	int error;
+ 
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	ksu_handle_stat(&dfd, &filename, &flag);
++#endif
++
+ 	error = vfs_fstatat(dfd, filename, &stat, flag);
+ 	if (error)
+ 		return error;
+@@ -374,6 +388,11 @@
+ 
+ 	if (!error)
+ 		error = cp_new_stat(&stat, statbuf);
++
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	if (!error)
++		ksu_handle_newfstat_ret(&fd, &statbuf);
++#endif
+ 
+ 	return error;
+ }
+@@ -501,6 +520,11 @@
+ 	if (!error)
+ 		error = cp_new_stat64(&stat, statbuf);
+ 
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	if (!error)
++		ksu_handle_fstat64_ret(&fd, &statbuf);
++#endif
++
+ 	return error;
+ }
+ 
+@@ -509,6 +533,10 @@
+ {
+ 	struct kstat stat;
+ 	int error;
++
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	ksu_handle_stat(&dfd, &filename, &flag);
++#endif
+ 
+ 	error = vfs_fstatat(dfd, filename, &stat, flag);
+ 	if (error)
+diff --git a/kernel/reboot.c b/kernel/reboot.c
+--- a/kernel/reboot.c
++++ b/kernel/reboot.c
+@@ -16,6 +16,11 @@
+ #include <linux/syscalls.h>
+ #include <linux/syscore_ops.h>
+ #include <linux/uaccess.h>
++
++#ifdef CONFIG_KSU_MANUAL_HOOK
++extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
++			       void __user **arg);
++#endif
+ 
+ /*
+  * this indicates whether you can reboot with ctrl-alt-del: the default is yes
+@@ -311,6 +316,10 @@
+ 	struct pid_namespace *pid_ns = task_active_pid_ns(current);
+ 	char buffer[256];
+ 	int ret = 0;
++
++#ifdef CONFIG_KSU_MANUAL_HOOK
++	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
++#endif
+ 
+ 	/* We only trust the superuser with rebooting the system. */
+ 	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))
