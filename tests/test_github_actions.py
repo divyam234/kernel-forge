@@ -19,6 +19,7 @@ class GithubActionsTests(unittest.TestCase):
         self.assertEqual(events["push"]["branches"], ["main"])
         self.assertIn("pull_request", events)
         self.assertIn("github.event_name == 'push'", self.data["jobs"]["build"]["if"])
+        self.assertEqual(self.data["jobs"]["build"]["strategy"]["matrix"]["device"], ["lemonades", "capri"])
 
     def test_build_installs_and_persists_ccache(self):
         steps = self.data["jobs"]["build"]["steps"]
@@ -40,11 +41,13 @@ class GithubActionsTests(unittest.TestCase):
         steps = self.data["jobs"]["build"]["steps"]
         build = next(s for s in steps if s.get("name") == "Build and package selected kernel.yaml (DroidSpaces always enabled)")
         self.assertIn("python -m kernelforge build", build["run"])
+        self.assertIn("matrix.device", build["run"])
         stats = next(s for s in steps if s.get("name") == "Report ccache performance")
         self.assertEqual(stats["if"], "always()")
         self.assertIn("GITHUB_STEP_SUMMARY", stats["run"])
         upload = next(s for s in steps if s.get("name") == "Upload generated AnyKernel3 ZIP and kernel images")
         self.assertEqual(upload["uses"], "actions/upload-artifact@v4")
+        self.assertIn("matrix.device", upload["with"]["name"])
         for path in ("Image*", "dtb*", "*.zip", ".config"):
             self.assertIn(path, upload["with"]["path"])
 

@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KernelForge shared kernel.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "toolchain",
+    "build",
+    "droidspaces",
+    "patches",
+    "package"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "kernelforge/v1"
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "ref"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arch"
+      ],
+      "properties": {
+        "arch": {
+          "enum": [
+            "arm",
+            "arm64"
+          ]
+        },
+        "defconfig": {
+          "$ref": "#/$defs/path"
+        },
+        "fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_./-]+$"
+          }
+        },
+        "strict_config": {
+          "type": "boolean"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "ccache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "max_size": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[KMGT]$"
+            }
+          }
+        }
+      }
+    },
+    "droidspaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config",
+        "destination",
+        "target"
+      ],
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/path"
+        },
+        "destination": {
+          "$ref": "#/$defs/path"
+        },
+        "target": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "$ref": "#/$defs/path"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "overlays": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "#/$defs/path"
+          },
+          "to": {
+            "$ref": "#/$defs/path"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "anykernel",
+        "boot"
+      ],
+      "properties": {
+        "type": {
+          "const": "anykernel3"
+        },
+        "output": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,100}\\.zip$"
+        },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "codenames",
+            "android_versions"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._+()-]{0,90}$"
+            },
+            "codenames": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+              }
+            },
+            "android_versions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+){0,2}$"
+              }
+            }
+          }
+        },
+        "anykernel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "url",
+            "ref",
+            "commit"
+          ],
+          "properties": {
+            "url": {
+              "type": "string",
+              "pattern": "^https://"
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            }
+          }
+        },
+        "boot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "partition",
+            "slots",
+            "ramdisk",
+            "vbmeta",
+            "install"
+          ],
+          "properties": {
+            "partition": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+            },
+            "slots": {
+              "enum": [
+                "auto",
+                "ab",
+                "single"
+              ]
+            },
+            "ramdisk": {
+              "enum": [
+                "auto",
+                "gz",
+                "lzo",
+                "lzma",
+                "xz",
+                "bz2",
+                "lz4",
+                "lz4-l",
+                "cpio",
+                "none"
+              ]
+            },
+            "vbmeta": {
+              "enum": [
+                "auto",
+                "0",
+                "1"
+              ]
+            },
+            "install": {
+              "enum": [
+                "write_boot",
+                "flash_boot"
+              ]
+            }
+          }
+        },
+        "images": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "device_check": {
+          "type": "boolean",
+          "description": "Enable codename validation; false by default"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)(?!.*(?:^|/)\\.git/)(?!.*(?:^|/)\\.work/)[^\\s]+$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "ref"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        }
+      }
+    }
+  }
+}

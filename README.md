@@ -1,8 +1,8 @@
 # KernelForge — DroidSpaces-first Android kernel builder
 
-**One kernel.yaml. No profiles. DroidSpaces configuration is always applied.**
+**Shared `kernel.yaml` plus a small YAML file per device. DroidSpaces is mandatory for every target.**
 
-KernelForge compiles a selected Android kernel with mandatory DroidSpaces support and ordered, optional kernel patches. Start with the official LineageOS 24.0 SM8250 kernel (Linux 4.19.325), not the entire Dreamworld fork. To target another kernel, edit the source URL, ref, compiler and configuration in kernel.yaml, and re-evaluate the optional patches.
+KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports, one pinned LLVM toolchain, and device-specific AnyKernel3 ZIPs. Supported targets: OnePlus 9R (`lemonades`, SM8250) and Motorola moto g10 (`capri`, Snapdragon SM4250, using the SM6225/Bengal-family source tree). Each uses its official LineageOS source and defconfig; **no OnePlus kernel settings are used on capri**.
 
 ## Run
 
@@ -10,37 +10,44 @@ Linux x86_64 with Python 3.10+, Git, Make, `ccache`, and standard kernel build d
 
 ~~~bash
 python3 -m pip install -r requirements.txt
-./build.sh validate
-./build.sh build --dry-run
-./build.sh prepare
-./build.sh build -j 8        # Compiles and always generates an AnyKernel3 ZIP
-./build.sh package           # Rebuild only the ZIP from existing kernel outputs
+./build.sh validate --device lemonades
+./build.sh validate --device capri
+./build.sh build --device capri --dry-run
+./build.sh build --device capri -j 8       # Compiles + packages DroidSpaces-capri.zip
+./build.sh build --device lemonades -j 8   # OnePlus 9R (default)
+./build.sh package --device capri          # Repackage previously built capri images
 ~~~
 
-The builder downloads a pinned kernel, applies patches in YAML order with git apply --check, copies the mandatory DroidSpaces fragment, merges all requested configs, checks the generated .config, builds the kernel, and **automatically packages AnyKernel3**. Build results live under .work/kernel/out and the YAML-named ZIP under .work/kernel/. The single pinned LLVM toolchain is stored under .work/_toolchains/kernel/llvm. Preparation resets and cleans only the managed .work/kernel/src checkout; don't hand-edit files there.
+The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the device's pinned source, applies the enabled shared patches, copies the mandatory shared DroidSpaces fragment, merges device-specific defconfig fragments, verifies `.config`, compiles and packages AnyKernel3. Workspaces are isolated: `.work/kernel/` for lemonades and `.work/kernel-capri/` for capri. LLVM is shared at `.work/_toolchains/kernel/llvm`; ccache is shared at `.work/_ccache`. Preparation resets only the selected managed source checkout.
 
 The commands are not a complete LineageOS ROM build. Integration into an Android device tree, SELinux, permissions and userspace runtime remains separate.
 
 ## Layout
 
 ~~~text
-kernel.yaml                      One configuration file — no profiles
+kernel.yaml                      Shared LLVM, DroidSpaces, patches, AnyKernel3 defaults
+devices/lemonades.yaml            OnePlus 9R kernel and package settings
+devices/capri.yaml                Motorola moto g10 kernel and package settings
 build.sh                         Command-line entrypoint
 kernelforge/cli.py               Source / patch / config / build / package
 assets/droidspaces.config        Always included
 patches/0001-lxc-cgroup-prefix.patch
 patches/backports-4.19/          Four systemd backport patches
-schema/kernel.schema.json        Optional editor schema
+schema/common.schema.json        Shared kernel.yaml editor/validation schema
+schema/device.schema.json        Device override editor/validation schema
+schema/kernel.schema.json        Fully merged per-device validation schema
 tests/                           Validation tests
 .github/workflows/kernel.yml     CI validation and on-demand build
 .work/                           Generated files, ignored
 ~~~
 
+The `common` and `device` schemas validate the two on-disk YAML formats; the `kernel` schema validates the resolved merge. All three are exercised by the test suite.
+
 ## Specific 4.19 backports for LineageOS 24
 
 Source: https://github.com/Droidspaces/droidspaces-backports/tree/main/kernel-4.19-series
 
-The upstream 4.19 series has ten patches to help old Android kernels support systemd 258–262. We ran its feature probe on LineageOS SM8250 4.19.325 and found:
+The upstream 4.19 series has ten patches for newer systemd. The feature-probe observations below are for **SM8250 only**, not a completed probe of the Motorola kernel:
 
 | Patch | Feature | Already available? | Action |
 |---|---|---|---|
@@ -56,13 +63,13 @@ The upstream 4.19 series has ten patches to help old Android kernels support sys
 
 The original 0006 patch conflicts because LineageOS 24 already has clone3 (435), close_range (436), epoll_pwait2 (441) and syscall count 442. Its adapted version changes only the missing 439 entries while keeping these pre-existing entries and counts.
 
-All four backports plus the LXC cgroup naming patch were previously checked together against the staged source index, but the kernel has **not been compiled or device-boot-tested** here. By default, **all four modern-systemd backports (0003–0006) are now disabled**; only the LXC cgroup patch stays enabled. For systemd 257 or earlier, these backports may be unnecessary. For systemd 260–262, reassess and enable the missing features, including 0003–0006. Upstream also requires a sufficiently recent DroidSpaces userspace runtime; the new mount API is addressed on the userspace side.
+All four modern-systemd backports (0003–0006) are included but **disabled on both devices by default**. Only the shared LXC cgroup naming patch is enabled. Its target function has matching context in both vendor kernel source trees, but capri has not been compiled or boot-tested. The LineageOS-specific `0006` adaptation is not automatically safe to enable on other vendors. Reprobe and port optional patches per device before using systemd 260+. The DroidSpaces userspace runtime also needs its mount-API fallback.
 
 **When changing source kernels, re-run upstream tools/probe-kernel.sh and adjust the patches list.** Do not blindly apply all 4.19 patches to every vendor tree.
 
 ## Declarative patches
 
-All patch entries in kernel.yaml can be enabled or disabled. The mandatory DroidSpaces fragment cannot be disabled. A patch that is missing or fails to apply aborts the build; none of these changes are committed into the upstream clone.
+The same `patches` list and `assets/droidspaces.config` are loaded for every device from shared `kernel.yaml`; device YAMLs **cannot override** these shared settings. Keep the modern-systemd backports disabled until tested on the selected source. A missing or failed enabled patch aborts the build.
 
 ~~~yaml
 droidspaces:
@@ -83,7 +90,7 @@ The cgroup patch restores compatibility naming for LXC and can be disabled if th
 
 ## Compiler selection
 
-The official LineageOS 24 SM8250 kernel `build.config.common` specifies `clang-r416183b` with `LLVM=1`. This builder now uses **one pinned LLVM toolchain** for the entire build: Clang/Clang++ for compiling, LLD for linking, llvm-ar/llvm-nm/llvm-objcopy and the other LLVM binutils. Both configuration and compilation use `LLVM=1 LLVM_IAS=1`. No separate GCC ARM64/ARM32 compilers or cross-compile prefixes.
+KernelForge uses a single pinned `clang-r416183b` LLVM toolchain for all devices, with `LLVM=1 LLVM_IAS=1` for config and compilation. This compiler matches the original OnePlus SM8250 kernel setup; compatibility with Motorola's full kernel build still needs testing. No GCC cross-toolchain is mixed in.
 
 The bundled prebuilt is for Linux x86_64. For a native ARM64 build host, provide a compatible full LLVM toolchain (including `ld.lld` and LLVM binutils), not merely a `clang` binary:
 
@@ -92,13 +99,13 @@ export KERNELFORGE_LLVM_BIN=/opt/llvm/bin
 ./build.sh build -j 8
 ~~~
 
-The `kernel.yaml` source and LLVM toolchain are both pinned to full Git commit hashes. If switching to another kernel version, check that it supports Clang's integrated assembler and the LLVM utilities before building. The build setup is not yet compiler-tested end to end.
+The LLVM checkout is shared, while source/defconfig and build workspaces are device specific. Both kernel sources are pinned to known commits; update the pins deliberately and verify compiler compatibility before flashing.
 
 ## GitHub Actions and ccache
 
-The GitHub Actions workflow (`.github/workflows/kernel.yml`) validates configuration and tests on pull requests. On pushes to `main` and manual `Actions → KernelForge → Run workflow` events it additionally compiles the one kernel defined in `kernel.yaml` and **automatically creates a YAML-configured AnyKernel3 ZIP**, with DroidSpaces always enabled. Successful builds upload the generated `*.zip`, raw kernel images, and resolved `.config` as downloadable workflow artifacts (retained for 14 days). ZIP naming and image mappings are configured only in YAML; this workflow is not hardcoded to OnePlus 9R. GitHub Releases publishing remains separate and is not enabled.
+GitHub Actions validates and dry-runs both devices on pull requests. Pushes to `main` and manual workflow runs build **lemonades and capri in separate matrix jobs**, each producing its own AnyKernel3 ZIP, kernel images and `.config` artifact (14-day retention). GitHub Releases publishing is not enabled.
 
-The build job installs `ccache` and dependencies, restores the pinned LLVM toolchain checkout and a compressed ccache directory using `actions/cache@v4`, resets hit/miss counters, builds with the pinned Clang toolchain, and prints cache statistics to both the job log and GitHub Actions step summary. The LLVM cache key follows the toolchain commit. Ccache keys include the runner OS/architecture and a configuration hash; a unique run ID permits refreshing the cache after every successful build. An older cache can be restored when configuration changes; ccache validates the compiler and inputs itself. The ccache limit defaults to 2 GiB via `kernel.yaml`; GitHub's cache retention/eviction limits still apply.
+Each matrix build restores the shared pinned LLVM toolchain and its own ccache key (device + configuration hash), prints cache statistics and uploads a device-labeled artifact. Ccache validates compiler/options before reuse. A full build and hardware boot have not been confirmed for capri.
 
 To use ccache locally (including on ARM64 hosts with a native LLVM toolchain):
 
@@ -119,40 +126,37 @@ build:
 
 KernelForge invokes `CC=ccache clang`, `HOSTCC=ccache clang`, and `HOSTCXX=ccache clang++` in **both** Make invocations, while keeping `LLVM=1 LLVM_IAS=1`. No GCC toolchain is introduced. Local cache files are stored at `.work/_ccache`; CI overrides `CCACHE_DIR` to `.ccache` so GitHub Actions can persist the cache. Set `enabled: false` if ccache is unavailable; initial builds are typically cache misses, and linking and device-tree generation are not cached by ccache. This setup has passed local tests and dry-runs; the actual GitHub-hosted kernel compile still needs a successful workflow run.
 
-## Dynamic AnyKernel3 packaging — one YAML for any target
+## Device-specific AnyKernel3 packaging
 
-Every successful `./build.sh build` produces a ZIP using `package` in the **same** `kernel.yaml`. There are no device-specific scripts, hardcoded Python models, or separate profiles. KernelForge fetches the pinned upstream [AnyKernel3](https://github.com/osm0sis/AnyKernel3) template and **generates `anykernel.sh`** from the declared device and boot partition. The OnePlus 9R settings below match the current initial target; changing them changes ZIP contents automatically.
+`kernel.yaml` provides the pinned AnyKernel3 template, common boot policy and `device_check: false`. Each `devices/<codename>.yaml` supplies the name, codename, Android version, kernel source, defconfig and image mapping. The generator creates `anykernel.sh` from the selected device rather than editing hardcoded scripts. For example, `devices/capri.yaml` contains:
 
 ~~~yaml
+source:
+  url: https://github.com/LineageOS/android_kernel_motorola_sm6225.git
+  ref: lineage-24.0
+  commit: 1da2d0861244d324cfff0fcb31dec374dd94436b
+build:
+  defconfig: vendor/bengal-perf_defconfig
+  fragments:
+    - vendor/ext_config/moto-bengal.config
+    - vendor/ext_config/capri-default.config
+  artifacts:
+    - arch/arm64/boot/Image
 package:
-  type: anykernel3
-  output: DroidSpaces-lemonades.zip
-  device_check: false       # do.devicecheck=0 (default); true enforces codenames
+  output: DroidSpaces-capri.zip
   device:
-    name: OnePlus 9R
-    codenames: [lemonades]
+    name: Motorola moto g10
+    codenames: [capri]
     android_versions: ["17"]
-  anykernel:
-    url: https://github.com/osm0sis/AnyKernel3.git
-    ref: master
-    commit: dca9dc370838d919d56c1f59ec78b27a14a72c68
-  boot:
-    partition: boot           # block by-name
-    slots: auto               # auto, ab, single
-    ramdisk: auto             # auto, gz, lz4, ...
-    vbmeta: auto              # auto, "0", "1"
-    install: write_boot      # write_boot or flash_boot
-  images:                    # output relative to .work/kernel/out → ZIP destination
+  images:
     arch/arm64/boot/Image: Image
-    arch/arm64/boot/dtb: dtb
-    arch/arm64/boot/dtbo.img: dtbo.img
 ~~~
 
-The generated script sets `do.devicecheck=0` **by default**, so AnyKernel3 skips codename checking. To enforce permitted codenames, set `package.device_check: true` in YAML, which generates `do.devicecheck=1`. The device codename and Android version fields are still generated, and the selected boot partition/slot policy is used. Disabling the codename check increases the risk of flashing an incompatible kernel onto another device. `do.modules=0` and `do.systemless=0`; no Magisk dependency is added. With `write_boot`, AnyKernel3 repacks the existing boot image and flashes bundled `dtbo.img` through its pinned core. The `flash_boot` alternative uses `split_boot`, `flash_boot` and `flash_dtbo`.
+Generated installers default to `do.devicecheck=0` for both devices. Set `package.device_check: true` in shared `kernel.yaml` to enforce the selected codename. Both use `boot` and automatic slot detection without Magisk. **Capri packages only the kernel `Image`**: the existing DTB and DTBO are retained because this kernel source does not produce verified combined images for standalone packaging. Capri's boot-header-v3 and vendor_boot arrangement still require real-device testing. **Never cross-flash** ZIPs between capri and lemonades.
 
-For another device, update **both** the kernel source/defconfig/patches and this package block. Set the actual `ro.product.device` codenames, verified Android versions, boot partition and A/B layout, correct kernel image filenames, and the required DTB/DTBO outputs. AnyKernel3 handles many device layouts, but cannot make mismatched vendor kernels, boot headers, image formats or uncommon GKI/vendor_boot arrangements compatible automatically. **Do not flash** until those inputs and a boot/recovery plan are verified on the physical device.
+For another device, create `devices/<codename>.yaml` with source URL/ref/commit, defconfig/fragments, AnyKernel3 device/output/images. Verify its kernel config, cgroup patch applicability, boot partition, DTB/DTBO format and recovery plan. A ZIP alone does not prove flash compatibility.
 
-The generated ZIP is intended for testing only until the kernel compiles and boots successfully. GitHub Actions stores it as a workflow artifact, not a release. Use `./build.sh package` when you only need to repack already-built images.
+Generated ZIPs are testing artifacts until a complete kernel build and physical boot pass. Rebuild packaging with `./build.sh package --device capri` or `--device lemonades`.
 
 ## Source credits
 
@@ -160,4 +164,4 @@ DroidSpaces configuration source: https://github.com/JackA1ltman/dreamworld_onep
 LXC cgroup change: Dreamworld commit 60c147cf1f33c09828128478ec602837e9279a05.
 Systemd backports: https://github.com/Droidspaces/droidspaces-backports (0006 adapted as documented).
 
-This is a local Git repository. No GitHub remote was created and no flashable image was generated.
+The repository has only local commits; no remote push or flashable device build has been completed here.

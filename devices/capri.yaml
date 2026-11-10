@@ -1,0 +1,23 @@
+# Motorola moto g10 / g10 Power (capri), LineageOS 24.0.
+# Source and config from official LineageOS capri + sm6225-common device trees.
+source:
+  url: https://github.com/LineageOS/android_kernel_motorola_sm6225.git
+  ref: lineage-24.0
+  commit: 1da2d0861244d324cfff0fcb31dec374dd94436b
+build:
+  defconfig: vendor/bengal-perf_defconfig
+  fragments:
+    - vendor/ext_config/moto-bengal.config
+    - vendor/ext_config/capri-default.config
+  # This kernel tree does not generate generic dtb/dtbo.img boot artifacts.
+  # Preserve DTB/DTBO in existing partitions; only replace the kernel image.
+  artifacts:
+    - arch/arm64/boot/Image
+package:
+  output: DroidSpaces-capri.zip
+  device:
+    name: Motorola moto g10
+    codenames: [capri]
+    android_versions: ["17"]
+  images:
+    arch/arm64/boot/Image: Image

@@ -17,6 +17,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 CONFIG = ROOT / "kernel.yaml"
+DEVICES = ROOT / "devices"
+DEFAULT_DEVICE = "lemonades"
 WORK_NAME = "kernel"
 SHA = re.compile(r"^[a-f0-9]{40}$")
 SUPPORTED = {"apiVersion", "source", "toolchain", "build", "droidspaces", "overlays", "patches", "package"}
@@ -127,11 +129,44 @@ def validate_package(cfg):
             "package.images ZIP destinations must be unique")
 
 
-def load_config():
+def merge_settings(common, device):
+    """Recursively merge device mappings; lists replace defaults."""
+    merged = dict(common)
+    for key, value in device.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_settings(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def workspace_name(device):
+    return WORK_NAME if device == DEFAULT_DEVICE else "kernel-" + device
+
+
+def load_config(device=DEFAULT_DEVICE):
+    require(isinstance(device, str) and bool(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,40}", device)),
+            "Invalid device codename")
     require(CONFIG.is_file(), "Missing kernel.yaml")
-    data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
-    fields(data, SUPPORTED, "kernel.yaml")
+    common = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    fields(common, SUPPORTED, "kernel.yaml")
+    require(common.get("apiVersion") == "kernelforge/v1", "Unsupported apiVersion")
+    require(common.get("droidspaces") is not None, "Shared DroidSpaces configuration is required")
+    require(common.get("patches") is not None, "Shared patch list is required")
+    device_path = DEVICES / (device + ".yaml")
+    require(device_path.is_file(), "Unknown device: " + device + " (missing " + str(device_path) + ")")
+    overrides = yaml.safe_load(device_path.read_text(encoding="utf-8"))
+    fields(overrides, {"source", "build", "package", "overlays"}, "devices/" + device + ".yaml")
+    require(isinstance(overrides.get("source"), dict), "Device source is required")
+    require(isinstance(overrides.get("build"), dict) and "defconfig" in overrides["build"],
+            "Device defconfig is required")
+    require(isinstance(overrides.get("package"), dict) and "device" in overrides["package"],
+            "Device AnyKernel3 metadata is required")
+    data = merge_settings(common, overrides)
+    fields(data, SUPPORTED, "merged kernel configuration")
     require(data.get("apiVersion") == "kernelforge/v1", "Unsupported apiVersion")
+    require(device in data["package"]["device"].get("codenames", []),
+            "Selected device does not match its AnyKernel3 codename")
     # DroidSpaces is mandatory and has no enabled/disabled switch.
     droidspaces = data.get("droidspaces")
     fields(droidspaces, {"config", "destination", "target"}, "droidspaces")
@@ -279,7 +314,7 @@ def bootstrap_toolchain(name, data, dry=False):
         require(bindir.is_dir() or dry, "LLVM override directory not found: " + str(bindir))
     else:
         spec = data["toolchain"]
-        dest = WORK / "_toolchains" / name / "llvm"
+        dest = WORK / "_toolchains" / WORK_NAME / "llvm"  # One common LLVM checkout for every device.
         if not dest.exists():
             if not dry:
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -491,29 +526,31 @@ def package(name, data, dry=False):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="KernelForge: single kernel.yaml with mandatory DroidSpaces")
+    parser = argparse.ArgumentParser(description="KernelForge: shared DroidSpaces, device-specific kernels")
     subs = parser.add_subparsers(dest="command", required=True)
     for command in ("validate", "prepare", "toolchain", "build", "package"):
         sub = subs.add_parser(command)
+        sub.add_argument("--device", default=DEFAULT_DEVICE, help="Device YAML codename (default: lemonades)")
         if command in ("prepare", "toolchain", "build", "package"):
             sub.add_argument("--dry-run", action="store_true", help="Print actions without writing or downloading")
         if command == "build":
             sub.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 4)
     opts = parser.parse_args(argv)
     try:
-        data = load_config()
+        data = load_config(opts.device)
+        name = workspace_name(opts.device)
         if opts.command == "validate":
-            print("Valid kernel.yaml; DroidSpaces is always enabled")
+            print("Valid device " + opts.device + "; shared DroidSpaces is always enabled")
         elif opts.command == "prepare":
-            prepare(WORK_NAME, data, dry=opts.dry_run)
+            prepare(name, data, dry=opts.dry_run)
         elif opts.command == "toolchain":
-            bootstrap_toolchain(WORK_NAME, data, dry=opts.dry_run)
+            bootstrap_toolchain(name, data, dry=opts.dry_run)
         elif opts.command == "build":
             require(opts.jobs > 0, "jobs must be greater than zero")
-            build(WORK_NAME, data, opts.jobs, dry=opts.dry_run)
-            package(WORK_NAME, data, dry=opts.dry_run)
+            build(name, data, opts.jobs, dry=opts.dry_run)
+            package(name, data, dry=opts.dry_run)
         elif opts.command == "package":
-            package(WORK_NAME, data, dry=opts.dry_run)
+            package(name, data, dry=opts.dry_run)
         return 0
     except (ForgeError, subprocess.CalledProcessError, OSError, yaml.YAMLError) as exc:
         print("ERROR:", str(exc), file=sys.stderr)

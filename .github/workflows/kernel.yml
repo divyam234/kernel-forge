@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate kernel.yaml and tests
+    name: Validate shared config and both devices
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -29,16 +29,26 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
       - name: Validate configuration
-        run: python -m kernelforge validate
+        run: |
+          for device in lemonades capri; do
+            python -m kernelforge validate --device "$device"
+          done
       - name: Preview build commands
-        run: python -m kernelforge build --dry-run
+        run: |
+          for device in lemonades capri; do
+            python -m kernelforge build --device "$device" --dry-run
+          done
 
   build:
-    name: Build LineageOS kernel with DroidSpaces (LLVM + ccache)
+    name: Build ${{ matrix.device }} with shared DroidSpaces (LLVM + ccache)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [lemonades, capri]
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
@@ -82,10 +92,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('kernel.yaml', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-${{ hashFiles('kernel.yaml', 'devices/**', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('kernel.yaml', 'assets/**', 'patches/**') }}-
-            ccache-v1-${{ runner.os }}-${{ runner.arch }}-
+            ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-${{ hashFiles('kernel.yaml', 'devices/**', 'assets/**', 'patches/**') }}-
+            ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-
 
       - name: Initialize cache statistics
         run: |
@@ -94,7 +104,7 @@ jobs:
           ccache --show-config | grep -E 'cache_dir|base_dir|compiler_check|max_size' || true
 
       - name: Build and package selected kernel.yaml (DroidSpaces always enabled)
-        run: python -m kernelforge build -j 4
+        run: python -m kernelforge build --device "${{ matrix.device }}" -j 4
 
       - name: Report ccache performance
         if: always()
@@ -112,11 +122,11 @@ jobs:
       - name: Upload generated AnyKernel3 ZIP and kernel images
         uses: actions/upload-artifact@v4
         with:
-          name: droidspaces-kernel-${{ github.run_number }}
+          name: droidspaces-${{ matrix.device }}-${{ github.run_number }}
           path: |
-            .work/kernel/*.zip
-            .work/kernel/out/arch/**/boot/Image*
-            .work/kernel/out/arch/**/boot/dtb*
-            .work/kernel/out/.config
+            .work/kernel*/*.zip
+            .work/kernel*/out/arch/**/boot/Image*
+            .work/kernel*/out/arch/**/boot/dtb*
+            .work/kernel*/out/.config
           if-no-files-found: error
           retention-days: 14

@@ -1,0 +1,19 @@
+# OnePlus 9R (lemonades), LineageOS 24.0.
+source:
+  url: https://github.com/LineageOS/android_kernel_oneplus_sm8250.git
+  ref: lineage-24.0
+  commit: 078365e5318de0a30a41f9707070b610bcd20f13
+build:
+  defconfig: vendor/kona-perf_defconfig
+  fragments:
+    - vendor/oplus.config
+package:
+  output: DroidSpaces-lemonades.zip
+  device:
+    name: OnePlus 9R
+    codenames: [lemonades]
+    android_versions: ["17"]
+  images:
+    arch/arm64/boot/Image: Image
+    arch/arm64/boot/dtb: dtb
+    arch/arm64/boot/dtbo.img: dtbo.img

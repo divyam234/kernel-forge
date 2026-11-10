@@ -1,15 +1,7 @@
 apiVersion: kernelforge/v1
 
-# One source of truth: edit this file for another kernel. No profiles.
-source:
-  url: https://github.com/LineageOS/android_kernel_oneplus_sm8250.git
-  ref: lineage-24.0
-  # Known LineageOS 24 snapshot. Update deliberately after reviewing patches.
-  commit: 078365e5318de0a30a41f9707070b610bcd20f13
-
-# One LLVM toolchain throughout: config, compile, link, and CI.
-# Matches LineageOS SM8250's build.config.common: clang-r416183b + LLVM=1.
-# The pinned prebuilt is for x86_64 Linux; use KERNELFORGE_LLVM_BIN on ARM64 hosts.
+# Shared settings for all devices. Device-specific source, defconfig and ZIP metadata
+# live in devices/<codename>.yaml. No build profiles.
 toolchain:
   url: https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git
   ref: lineage-20.0
@@ -17,33 +9,26 @@ toolchain:
 
 build:
   arch: arm64
-  defconfig: vendor/kona-perf_defconfig
-  fragments:
-    - vendor/oplus.config
   targets: []
   artifacts:
     - arch/arm64/boot/Image
     - arch/arm64/boot/dtb
     - arch/arm64/boot/dtbo.img
   strict_config: true
-  # Cache Clang compilation locally and on GitHub Actions.
   ccache:
     enabled: true
     max_size: 2G
 
-# Mandatory: always applied, and always merged as the final fragment.
+# Mandatory common DroidSpaces fragment: applied to every device.
 droidspaces:
   config: assets/droidspaces.config
   destination: arch/arm64/configs/vendor/droidspaces.config
   target: vendor/droidspaces.config
 
-# Optional additional file overlays for other kernel trees.
 overlays: []
 
-# Order is important. 0006 is ported to LineageOS 24's existing syscalls.
-# 0001, 0002, 0007-0009 are already present in this kernel; 0010 is x86.
-# Optional modern-systemd backports: all four are retained but disabled by default.
-# Enable the missing features when targeting systemd 260+.
+# Shared 4.19 cgroup patch. Modern-systemd backports stay optional and off.
+# Reassess compatibility with the selected kernel before enabling the backports.
 patches:
   - file: patches/backports-4.19/0003-statx-add-mount-ID.patch
     enabled: false
@@ -56,27 +41,17 @@ patches:
   - file: patches/0001-lxc-cgroup-prefix.patch
     enabled: true
 
-# AnyKernel3 ZIP is required for every build. Change this block for another device.
-# Kernel source, defconfig, patches and image outputs must ALSO match that device.
+# Common AnyKernel3 installer policy; device metadata and images are in devices/.
 package:
   type: anykernel3
-  output: DroidSpaces-lemonades.zip
-  device_check: false          # do.devicecheck=0 by default; set true to enforce codenames
-  device:
-    name: OnePlus 9R
-    codenames: [lemonades]       # ro.product.device / ro.build.product
-    android_versions: ["17"]   # supported.versions in AnyKernel3
+  device_check: false
   anykernel:
     url: https://github.com/osm0sis/AnyKernel3.git
     ref: master
     commit: dca9dc370838d919d56c1f59ec78b27a14a72c68
   boot:
-    partition: boot             # by-name block partition
-    slots: auto                 # auto, ab or single
+    partition: boot
+    slots: auto
     ramdisk: auto
     vbmeta: auto
-    install: write_boot        # write_boot or flash_boot
-  images:                      # paths relative to .work/kernel/out
-    arch/arm64/boot/Image: Image
-    arch/arm64/boot/dtb: dtb
-    arch/arm64/boot/dtbo.img: dtbo.img
+    install: write_boot
