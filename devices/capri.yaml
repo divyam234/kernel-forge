@@ -3,7 +3,7 @@
 source:
   url: https://github.com/LineageOS/android_kernel_motorola_sm6225.git
   ref: lineage-24.0
-  commit: 1da2d0861244d324cfff0fcb31dec374dd94436b
+  # Always fetch the latest lineage-24.0 branch head.
 build:
   defconfig: vendor/bengal-perf_defconfig
   fragments:

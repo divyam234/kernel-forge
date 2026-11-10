@@ -16,7 +16,8 @@
       "const": "kernelforge/v1"
     },
     "source": {
-      "$ref": "#/$defs/source"
+      "$ref": "#/$defs/source",
+      "not": {"required": ["commit"]}
     },
     "toolchain": {
       "$ref": "#/$defs/source"

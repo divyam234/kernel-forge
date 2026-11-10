@@ -175,13 +175,10 @@ def load_config(device=DEFAULT_DEVICE):
     relative(droidspaces.get("target"), "droidspaces.target")
 
     src = data.get("source")
-    fields(src, {"url", "ref", "commit"}, "source")
+    fields(src, {"url", "ref"}, "source")
     require(isinstance(src.get("url"), str) and src["url"].startswith("https://"),
             "source.url must be an HTTPS Git URL")
     require(isinstance(src.get("ref"), str) and bool(src["ref"]), "source.ref is required")
-    if src.get("commit") is not None:
-        require(isinstance(src["commit"], str) and bool(SHA.fullmatch(src["commit"])),
-                "source.commit must be a full 40-character SHA")
 
     tc = data.get("toolchain")
     fields(tc, {"url", "ref", "commit"}, "toolchain")
@@ -265,12 +262,9 @@ def fetch_source(name, data, dry=False):
         run(["git", "-C", str(source), "clean", "-fdx"], dry=dry)
     ref = data["source"]["ref"]
     run(["git", "-C", str(source), "fetch", "--depth=1", "origin", ref], dry=dry)
-    commit = data["source"].get("commit")
-    if commit:
-        # GitHub accepts fetch-by-SHA for reachable commits, including pinned old heads.
-        run(["git", "-C", str(source), "fetch", "--depth=1", "origin", commit], dry=dry)
-    else:
-        commit = run(["git", "-C", str(source), "rev-parse", "FETCH_HEAD"], dry=dry, capture=True)
+    # Always use the branch head fetched in this run, never a pinned commit.
+    commit = run(["git", "-C", str(source), "rev-parse", "FETCH_HEAD"],
+                 dry=dry, capture=True)
     run(["git", "-C", str(source), "checkout", "--detach", commit or "FETCH_HEAD"], dry=dry)
     return source, commit
 

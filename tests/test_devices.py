@@ -1,6 +1,7 @@
 """Device selection and shared DroidSpaces configuration."""
-import json
 import io
+import json
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -19,8 +20,7 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(capri["source"]["url"],
                          "https://github.com/LineageOS/android_kernel_motorola_sm6225.git")
         self.assertEqual(capri["source"]["ref"], "lineage-24.0")
-        self.assertEqual(capri["source"]["commit"],
-                         "1da2d0861244d324cfff0fcb31dec374dd94436b")
+        self.assertNotIn("commit", capri["source"])
         self.assertEqual(capri["build"]["defconfig"], "vendor/bengal-perf_defconfig")
         self.assertEqual(capri["build"]["fragments"], [
             "vendor/ext_config/moto-bengal.config",
@@ -39,6 +39,8 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(oneplus["droidspaces"], motorola["droidspaces"])
         self.assertEqual(oneplus["patches"], motorola["patches"])
         self.assertEqual(oneplus["toolchain"], motorola["toolchain"])
+        self.assertNotIn("commit", oneplus["source"])
+        self.assertNotIn("commit", motorola["source"])
         enabled = [p["file"] for p in motorola["patches"] if p.get("enabled", True)]
         self.assertEqual(enabled, ["patches/0001-lxc-cgroup-prefix.patch"])
         self.assertEqual(motorola["package"]["device_check"], False)
@@ -90,6 +92,52 @@ class DeviceTests(unittest.TestCase):
                 device = yaml.safe_load((cli.DEVICES / (name + ".yaml")).read_text())
                 jsonschema.validate(device, device_schema)
                 jsonschema.validate(cli.load_config(name), merged_schema)
+
+    def test_pinned_kernel_commit_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            original = yaml.safe_load((cli.DEVICES / "capri.yaml").read_text(encoding="utf-8"))
+            original["source"]["commit"] = "a" * 40
+            path = Path(temp) / "capri.yaml"
+            path.write_text(yaml.safe_dump(original), encoding="utf-8")
+            with patch.object(cli, "DEVICES", Path(temp)):
+                with self.assertRaisesRegex(cli.ForgeError, "unknown keys"):
+                    cli.load_config("capri")
+            schema = json.loads((cli.ROOT / "schema/device.schema.json").read_text())
+            with self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(original, schema)
+
+    def test_fetch_source_tracks_branch_updates(self):
+        # A real local Git branch verifies each invocation advances to its HEAD.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            upstream = root / "upstream"
+            def git(*args):
+                return subprocess.run(["git", *map(str, args)], check=True,
+                                      capture_output=True, text=True).stdout.strip()
+            git("init", "-b", "lineage-24.0", upstream)
+            git("-C", upstream, "config", "user.name", "KernelForge Test")
+            git("-C", upstream, "config", "user.email", "test@example.invalid")
+            file = upstream / "version"
+            file.write_text("first", encoding="utf-8")
+            git("-C", upstream, "add", "version")
+            git("-C", upstream, "commit", "-m", "first")
+            first = git("-C", upstream, "rev-parse", "HEAD")
+
+            data = cli.load_config("capri")
+            data["source"]["url"] = str(upstream)
+            with patch.object(cli, "WORK", root / ".work"), redirect_stdout(io.StringIO()):
+                src, selected_first = cli.fetch_source("kernel-capri", data)
+                self.assertEqual(first, selected_first)
+                self.assertEqual((src / "version").read_text(), "first")
+
+                file.write_text("second", encoding="utf-8")
+                git("-C", upstream, "add", "version")
+                git("-C", upstream, "commit", "-m", "second")
+                second = git("-C", upstream, "rev-parse", "HEAD")
+                src, selected_second = cli.fetch_source("kernel-capri", data)
+                self.assertEqual(selected_second, second)
+                self.assertNotEqual(selected_first, selected_second)
+                self.assertEqual((src / "version").read_text(), "second")
 
 
 if __name__ == "__main__":

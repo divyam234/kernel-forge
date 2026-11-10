@@ -18,7 +18,7 @@ python3 -m pip install -r requirements.txt
 ./build.sh package --device capri          # Repackage previously built capri images
 ~~~
 
-The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the device's pinned source, applies the enabled shared patches, copies the mandatory shared DroidSpaces fragment, merges device-specific defconfig fragments, verifies `.config`, compiles and packages AnyKernel3. Workspaces are isolated: `.work/kernel/` for lemonades and `.work/kernel-capri/` for capri. LLVM is shared at `.work/_toolchains/kernel/llvm`; ccache is shared at `.work/_ccache`. Preparation resets only the selected managed source checkout.
+The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the **current `lineage-24.0` branch HEAD at each build** (no kernel commit pins), applies the enabled shared patches, copies the mandatory DroidSpaces fragment, merges device-specific defconfig fragments, verifies `.config`, compiles and packages AnyKernel3. Workspaces are isolated: `.work/kernel/` for lemonades and `.work/kernel-capri/` for capri. LLVM is shared at `.work/_toolchains/kernel/llvm`; ccache is shared at `.work/_ccache`. Preparation resets only the selected managed source checkout.
 
 The commands are not a complete LineageOS ROM build. Integration into an Android device tree, SELinux, permissions and userspace runtime remains separate.
 
@@ -99,7 +99,7 @@ export KERNELFORGE_LLVM_BIN=/opt/llvm/bin
 ./build.sh build -j 8
 ~~~
 
-The LLVM checkout is shared, while source/defconfig and build workspaces are device specific. Both kernel sources are pinned to known commits; update the pins deliberately and verify compiler compatibility before flashing.
+The LLVM checkout is shared, while source/defconfig and build workspaces are device specific. **Kernel source commits are intentionally not pinned:** each `prepare` or `build` fetches the selected device's latest `lineage-24.0` branch head and records the resolved SHA in `.work/<device-workspace>/prepared.json` for traceability. The LLVM toolchain and AnyKernel3 template remain pinned for tooling stability. Upstream changes can break patches, compilation or boot compatibility, so verify results before flashing.
 
 ## GitHub Actions and ccache
 
@@ -134,7 +134,7 @@ KernelForge invokes `CC=ccache clang`, `HOSTCC=ccache clang`, and `HOSTCXX=ccach
 source:
   url: https://github.com/LineageOS/android_kernel_motorola_sm6225.git
   ref: lineage-24.0
-  commit: 1da2d0861244d324cfff0fcb31dec374dd94436b
+  # Always track the latest lineage-24.0 branch head.
 build:
   defconfig: vendor/bengal-perf_defconfig
   fragments:
@@ -154,7 +154,7 @@ package:
 
 Generated installers default to `do.devicecheck=0` for both devices. Set `package.device_check: true` in shared `kernel.yaml` to enforce the selected codename. Both use `boot` and automatic slot detection without Magisk. **Capri packages only the kernel `Image`**: the existing DTB and DTBO are retained because this kernel source does not produce verified combined images for standalone packaging. Capri's boot-header-v3 and vendor_boot arrangement still require real-device testing. **Never cross-flash** ZIPs between capri and lemonades.
 
-For another device, create `devices/<codename>.yaml` with source URL/ref/commit, defconfig/fragments, AnyKernel3 device/output/images. Verify its kernel config, cgroup patch applicability, boot partition, DTB/DTBO format and recovery plan. A ZIP alone does not prove flash compatibility.
+For another device, create `devices/<codename>.yaml` with source URL and branch ref (no pinned kernel SHA), defconfig/fragments, and AnyKernel3 device/output/images. Verify its kernel config, cgroup patch applicability, boot partition, DTB/DTBO format and recovery plan. A ZIP alone does not prove flash compatibility.
 
 Generated ZIPs are testing artifacts until a complete kernel build and physical boot pass. Rebuild packaging with `./build.sh package --device capri` or `--device lemonades`.
 
