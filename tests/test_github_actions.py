@@ -19,8 +19,25 @@ class GithubActionsTests(unittest.TestCase):
         self.assertEqual(events["push"]["branches"], ["main"])
         self.assertIn("pull_request", events)
         self.assertIn("github.event_name == 'push'", self.data["jobs"]["build"]["if"])
-        self.assertEqual(self.data["jobs"]["build"]["strategy"]["matrix"]["device"], ["lemonades", "capri"])
-
+        self.assertEqual(self.data["jobs"]["build"]["strategy"]["matrix"]["device"],
+                         "${{ fromJSON(needs.validate.outputs.devices) }}")
+    def test_manual_dispatch_selects_one_or_both_devices(self):
+        device_input = self.data["on"]["workflow_dispatch"]["inputs"]["device"]
+        self.assertEqual(device_input["type"], "choice")
+        self.assertEqual(device_input["default"], "both")
+        self.assertEqual(device_input["options"], ["both", "lemonades", "capri"])
+        validate = self.data["jobs"]["validate"]
+        self.assertEqual(validate["outputs"]["devices"], "${{ steps.select.outputs.devices }}")
+        select = next(s for s in validate["steps"] if s.get("id") == "select")
+        self.assertEqual(select["env"]["REQUESTED_DEVICE"], "${{ inputs.device || 'both' }}")
+        for choice, result in (
+            ("both", 'devices=["lemonades","capri"]'),
+            ("lemonades", 'devices=["lemonades"]'),
+            ("capri", 'devices=["capri"]'),
+        ):
+            with self.subTest(choice=choice):
+                self.assertIn(f'{choice}) echo \'{result}\'', select["run"])
+        self.assertIn("github.run_id", self.data["concurrency"]["group"])
     def test_build_installs_and_persists_ccache(self):
         steps = self.data["jobs"]["build"]["steps"]
         install = next(s for s in steps if s.get("name") == "Install build dependencies and ccache")
@@ -42,6 +59,8 @@ class GithubActionsTests(unittest.TestCase):
         build = next(s for s in steps if s.get("name") == "Build and package selected kernel.yaml (DroidSpaces always enabled)")
         self.assertIn("python -m kernelforge build", build["run"])
         self.assertIn("matrix.device", build["run"])
+        self.assertIn("-j \"$(nproc)\"", build["run"])
+        self.assertNotIn("-j 4", build["run"])
         stats = next(s for s in steps if s.get("name") == "Report ccache performance")
         self.assertEqual(stats["if"], "always()")
         self.assertIn("GITHUB_STEP_SUMMARY", stats["run"])

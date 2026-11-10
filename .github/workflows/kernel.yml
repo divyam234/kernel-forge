@@ -5,19 +5,31 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      device:
+        description: Kernel device(s) to build
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - lemonades
+          - capri
 
 permissions:
   contents: read
 
 # Avoid spending build minutes on superseded commits to the same branch.
 concurrency:
-  group: kernel-forge-${{ github.workflow }}-${{ github.ref }}
+  group: kernel-forge-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'auto' }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   validate:
     name: Validate shared config and both devices
     runs-on: ubuntu-24.04
+    outputs:
+      devices: ${{ steps.select.outputs.devices }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,6 +40,17 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - name: Select requested devices
+        id: select
+        env:
+          REQUESTED_DEVICE: ${{ inputs.device || 'both' }}
+        run: |
+          case "$REQUESTED_DEVICE" in
+            both) echo 'devices=["lemonades","capri"]' >> "$GITHUB_OUTPUT" ;;
+            lemonades) echo 'devices=["lemonades"]' >> "$GITHUB_OUTPUT" ;;
+            capri) echo 'devices=["capri"]' >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unsupported device: $REQUESTED_DEVICE" >&2; exit 1 ;;
+          esac
       - name: Validate configuration
         run: |
           for device in lemonades capri; do
@@ -48,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: [lemonades, capri]
+        device: ${{ fromJSON(needs.validate.outputs.devices) }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
@@ -104,7 +127,7 @@ jobs:
           ccache --show-config | grep -E 'cache_dir|base_dir|compiler_check|max_size' || true
 
       - name: Build and package selected kernel.yaml (DroidSpaces always enabled)
-        run: python -m kernelforge build --device "${{ matrix.device }}" -j 4
+        run: python -m kernelforge build --device "${{ matrix.device }}" -j "$(nproc)"
 
       - name: Report ccache performance
         if: always()
