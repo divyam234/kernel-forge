@@ -17,17 +17,20 @@ class KernelTests(unittest.TestCase):
         self.assertEqual(cli.requested_settings(data)["CONFIG_MEMCG"], "y")
         self.assertEqual(cli.requested_settings(data)["CONFIG_OVERLAY_FS"], "y")
 
-    def test_backports_present_and_ordered(self):
+    def test_backports_present_and_three_disabled_by_default(self):
         data = cli.load_config()
-        enabled = [p["file"] for p in data["patches"] if p.get("enabled", True)]
-        self.assertEqual(len(enabled), 5)
-        self.assertTrue(enabled[0].endswith("0003-statx-add-mount-ID.patch"))
-        self.assertTrue(enabled[1].endswith("0004-statx-add-mount_root.patch"))
-        self.assertTrue(enabled[2].endswith("0005-utimensat-AT_EMPTY_PATH-support.patch"))
-        self.assertTrue(enabled[3].endswith("0006-faccessat2-lineage24.patch"))
-        self.assertTrue(enabled[4].endswith("0001-lxc-cgroup-prefix.patch"))
-        for p in enabled:
-            self.assertTrue(cli.local_path(p, "patch").is_file(), p)
+        backports = data["patches"][:4]
+        self.assertEqual(len(backports), 4)
+        self.assertTrue(backports[0]["file"].endswith("0003-statx-add-mount-ID.patch"))
+        self.assertTrue(backports[1]["file"].endswith("0004-statx-add-mount_root.patch"))
+        self.assertTrue(backports[2]["file"].endswith("0005-utimensat-AT_EMPTY_PATH-support.patch"))
+        self.assertTrue(backports[3]["file"].endswith("0006-faccessat2-lineage24.patch"))
+        self.assertEqual([p.get("enabled", True) for p in backports],
+                         [False, False, False, True])
+        self.assertTrue(data["patches"][4]["file"].endswith("0001-lxc-cgroup-prefix.patch"))
+        self.assertTrue(data["patches"][4]["enabled"])
+        for p in data["patches"]:
+            self.assertTrue(cli.local_path(p["file"], "patch").is_file(), p["file"])
 
     def test_dry_run_does_not_touch_workspace(self):
         data = cli.load_config()

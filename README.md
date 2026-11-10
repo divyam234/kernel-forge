@@ -46,17 +46,17 @@ The upstream 4.19 series has ten patches to help old Android kernels support sys
 |---|---|---|---|
 | 0001 | waitid P_PIDFD | Yes | Skip |
 | 0002 | SO_BINDTOIFINDEX | Yes | Skip |
-| 0003 | statx mount ID | No | Apply |
-| 0004 | statx mount root | No | Apply |
-| 0005 | utimensat AT_EMPTY_PATH | No | Apply |
-| 0006 | faccessat2 | No | Apply with syscall-table adaptation |
+| 0003 | statx mount ID | No | Included, disabled by default |
+| 0004 | statx mount root | No | Included, disabled by default |
+| 0005 | utimensat AT_EMPTY_PATH | No | Included, disabled by default |
+| 0006 | faccessat2 | No | Enabled, with syscall-table adaptation |
 | 0007–0008 | close_range | Yes | Skip |
 | 0009 | rtnetlink nexthop | Yes | Skip |
 | 0010 | x86 syscall entries | ARM64 kernel | Skip |
 
 The original 0006 patch conflicts because LineageOS 24 already has clone3 (435), close_range (436), epoll_pwait2 (441) and syscall count 442. Its adapted version changes only the missing 439 entries while keeping these pre-existing entries and counts.
 
-All four selected backports, plus the LXC cgroup naming patch, were successfully applied together to a staged Git index of the exact source snapshot. The combined patchset changes 12 files, but has **not been kernel-compiled or device-boot-tested** here. For systemd 257 or earlier, these systemd-specific backports may not be necessary. For systemd 260–262, upstream also requires a sufficiently recent DroidSpaces userspace runtime; the new mount API is addressed on the userspace side.
+All four backports plus the LXC cgroup naming patch were previously checked together against the staged source index, but the kernel has **not been compiled or device-boot-tested** here. By default, **0003–0005 are now disabled**, while **0006 (faccessat2) and the LXC cgroup patch stay enabled**. For systemd 257 or earlier, the modern-systemd backports may be unnecessary; for systemd 260–262, you must reassess and enable the required missing features, including 0003–0005. Upstream also requires a sufficiently recent DroidSpaces userspace runtime; the new mount API is addressed on the userspace side.
 
 **When changing source kernels, re-run upstream tools/probe-kernel.sh and adjust the patches list.** Do not blindly apply all 4.19 patches to every vendor tree.
 
@@ -72,7 +72,9 @@ droidspaces:
 
 patches:
   - file: patches/backports-4.19/0003-statx-add-mount-ID.patch
-    enabled: true
+    enabled: false
+  # 0004 and 0005 also remain listed but disabled by default.
+  # 0006 faccessat2 remains enabled.
   - file: patches/0001-lxc-cgroup-prefix.patch
     enabled: true
 ~~~
