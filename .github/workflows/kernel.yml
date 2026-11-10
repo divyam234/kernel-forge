@@ -135,8 +135,8 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.device }}-${{ hashFiles('kernel.yaml', 'devices/**', 'assets/**', 'patches/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # Save finished kernel outputs before packaging, so a broken AnyKernel3
-      # step cannot lose the Image and generated Kconfig.
+      # Save finished kernel outputs before packaging so a packaging failure
+      # cannot lose the Image, generated Kconfig, or matching Capri modules.
       - name: Stage compiled kernel outputs
         if: ${{ always() && !cancelled() && steps.compile.outcome == 'success' }}
         run: |
@@ -171,9 +171,17 @@ jobs:
           device="${{ matrix.device }}"
           python -m kernelforge package --device "$device"
           workspace="$(python -c 'import sys; from kernelforge.cli import workspace_name; print(workspace_name(sys.argv[1]))' "$device")"
+          filename="$(python -c 'import sys; from kernelforge.cli import load_config; print(load_config(sys.argv[1])["package"]["output"])' "$device")"
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
+          echo "artifact=${filename%.zip}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           mkdir -p "dist/packages/$device"
-          cp ".work/$workspace/DroidSpaces-$device.zip" "dist/packages/$device/"
+          cp ".work/$workspace/$filename" "dist/packages/$device/"
           ls -lh "dist/packages/$device/"
+          if test "$device" = capri; then
+            echo '### Capri: NON-FLASHABLE payload; generate complete images offline. Never sideload this ZIP.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '### Lemonades: standard AnyKernel3 ZIP (unchanged).' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Report ccache performance
         if: always()
@@ -188,11 +196,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload packaged AnyKernel3 ZIP
+      - name: Upload package (Capri non-flashable payload; lemonades AnyKernel3)
         if: ${{ always() && !cancelled() && steps.package.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
-          name: droidspaces-${{ matrix.device }}-${{ github.run_number }}
-          path: dist/packages/${{ matrix.device }}/DroidSpaces-${{ matrix.device }}.zip
+          name: ${{ steps.package.outputs.artifact }}
+          path: dist/packages/${{ matrix.device }}/${{ steps.package.outputs.filename }}
           if-no-files-found: error
           retention-days: 14

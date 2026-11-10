@@ -1,5 +1,8 @@
 """YAML-driven AnyKernel3 packaging tests, no downloads or flashing."""
 import copy
+import hashlib
+import json
+import zipfile
 import io
 from pathlib import Path
 import subprocess
@@ -109,6 +112,88 @@ class AnyKernelTests(unittest.TestCase):
                 self.assertIn("do.devicecheck=0\n", script)
                 self.assertNotIn("maguro", script)
                 self.assertEqual(zf.read("Image"), b"KERNEL-arch/arm64/boot/Image")
+
+    def test_capri_payload_is_exhaustive_and_non_flashable(self):
+        data = cli.load_config("capri")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work = root / "work"
+            folder = work / "kernel-capri"
+            out = folder / "out"
+            (out / "arch/arm64/boot").mkdir(parents=True)
+            (out / "arch/arm64/boot/Image").write_bytes(b"matched kernel")
+            (out / "include/config").mkdir(parents=True)
+            (out / "include/config/kernel.release").write_text("4.19-test\n")
+            (folder / ".kernelforge-managed").write_text("test\n")
+            template = root / "template"
+            (template / "tools").mkdir(parents=True)
+            for name in ("magiskboot", "fec"):
+                (template / "tools" / name).write_bytes(name.encode())
+            (template / "anykernel.sh").write_text("must not ship")
+            (template / "tools/ak3-core.sh").write_text("must not ship")
+
+            def stage(output, staging, config, *, strip_tool):
+                self.assertEqual(output, out)
+                self.assertEqual(config, data["package"]["modules"])
+                for name in (
+                    "module-files/vendor/lib/modules/example.ko",
+                    "module-files/vendor/lib/modules/modules.sha256",
+                    "module-files/early.sha256",
+                    "vendor_boot-files/ramdisk/lib/modules/example.ko",
+                ):
+                    path = staging / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(name.encode())
+
+            with patch.object(cli, "WORK", work), \
+                 patch.object(cli, "bootstrap_anykernel", return_value=template), \
+                 patch.object(cli, "bootstrap_toolchain", return_value=root / "llvm"), \
+                 patch.object(cli, "stage_modules", side_effect=stage) as stage_mock, \
+                 patch.object(cli, "render_anykernel", side_effect=AssertionError("installer rendered")), \
+                 redirect_stdout(io.StringIO()):
+                result = cli.package("kernel-capri", data)
+            stage_mock.assert_called_once()
+            self.assertEqual(result.name, "DroidSpaces-capri-payload.zip")
+            with zipfile.ZipFile(result) as archive:
+                manifest = json.loads(archive.read("payload.json"))
+                self.assertEqual(manifest["format"], "kernelforge-capri-payload-v1")
+                self.assertEqual(manifest["device"], "capri")
+                self.assertEqual(manifest["kernel_release"], "4.19-test")
+                self.assertEqual(set(manifest), {"format", "device", "kernel_release", "files"})
+                self.assertEqual(set(archive.namelist()), set(manifest["files"]) | {"payload.json"})
+                self.assertEqual(archive.read("boot-files/Image"), b"matched kernel")
+                for name, digest in manifest["files"].items():
+                    self.assertEqual(hashlib.sha256(archive.read(name)).hexdigest(), digest)
+                for name in ("tools/magiskboot", "tools/fec"):
+                    self.assertEqual((archive.getinfo(name).external_attr >> 16) & 0o777, 0o755)
+                self.assertFalse(any(name.startswith("META-INF/") for name in archive.namelist()))
+                self.assertNotIn("anykernel.sh", archive.namelist())
+                self.assertNotIn("tools/ak3-core.sh", archive.namelist())
+                self.assertNotIn("tools/install-modules.sh", archive.namelist())
+
+    def test_manual_payload_does_not_require_installer_boot_policy(self):
+        cfg = cli.load_config("capri")["package"]
+        cfg.pop("boot")
+        cli.validate_package(cfg)
+
+    def test_recovery_module_installation_is_rejected(self):
+        cfg = cli.load_config("capri")["package"]
+        cfg["type"] = "anykernel3"
+        with self.assertRaisesRegex(cli.ForgeError, "recovery module installation"):
+            cli.validate_package(cfg)
+        with self.assertRaises(cli.ForgeError):
+            cli.render_anykernel(cfg)
+
+    def test_manual_payload_requires_capri_modules_and_image(self):
+        for mutate in (
+            lambda cfg: cfg.pop("modules"),
+            lambda cfg: cfg["device"].update(codenames=["lemonades"]),
+            lambda cfg: cfg["images"].update({"another/path": "dtbo.img"}),
+        ):
+            cfg = cli.load_config("capri")["package"]
+            mutate(cfg)
+            with self.assertRaises(cli.ForgeError):
+                cli.validate_package(cfg)
 
     def test_rejects_unsafe_device_settings_and_overwriting_installer(self):
         cases = [

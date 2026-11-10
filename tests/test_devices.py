@@ -35,7 +35,8 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(capri["package"]["device"]["name"], "Motorola moto g10 power")
         self.assertNotIn("caprip", capri["package"]["device"]["codenames"])
         self.assertEqual(capri["package"]["device"]["android_versions"], ["17"])
-        self.assertEqual(capri["package"]["output"], "DroidSpaces-capri.zip")
+        self.assertEqual(capri["package"]["type"], "manual-images")
+        self.assertEqual(capri["package"]["output"], "DroidSpaces-capri-payload.zip")
         self.assertEqual(cli.workspace_name("capri"), "kernel-capri")
 
     def test_both_devices_share_droidspaces_and_cgroup_patch(self):
@@ -79,6 +80,23 @@ class DeviceTests(unittest.TestCase):
                 device = yaml.safe_load((cli.DEVICES / (name + ".yaml")).read_text())
                 jsonschema.validate(device, device_schema)
                 jsonschema.validate(cli.load_config(name), merged_schema)
+
+    def test_package_schemas_reject_recovery_module_flow(self):
+        for schema_name, document in (
+            ("kernel", cli.load_config("capri")),
+            ("device", yaml.safe_load((cli.DEVICES / "capri.yaml").read_text())),
+        ):
+            schema = json.loads((cli.ROOT / ("schema/" + schema_name + ".schema.json")).read_text())
+            document["package"]["type"] = "anykernel3"
+            with self.subTest(schema=schema_name), self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(document, schema)
+
+    def test_manual_package_schema_requires_modules(self):
+        document = cli.load_config("capri")
+        document["package"].pop("modules")
+        schema = json.loads((cli.ROOT / "schema/kernel.schema.json").read_text())
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(document, schema)
 
     def test_pinned_kernel_commit_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

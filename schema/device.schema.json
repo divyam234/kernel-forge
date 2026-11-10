@@ -89,9 +89,22 @@
         "device",
         "images"
       ],
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "manual-images"}}, "required": ["type"]},
+          "then": {
+            "required": ["modules"],
+            "properties": {
+              "device": {"properties": {"codenames": {"const": ["capri"]}}},
+              "images": {"maxProperties": 1, "additionalProperties": {"const": "Image"}}
+            }
+          },
+          "else": {"not": {"required": ["modules"]}}
+        }
+      ],
       "properties": {
         "type": {
-          "const": "anykernel3"
+          "enum": ["anykernel3", "manual-images"]
         },
         "output": {
           "type": "string",

@@ -17,7 +17,8 @@ build:
     - Module.symvers
     - include/config/kernel.release
 package:
-  output: DroidSpaces-capri.zip
+  type: manual-images
+  output: DroidSpaces-capri-payload.zip
   device_check: true
   device:
     name: Motorola moto g10 power

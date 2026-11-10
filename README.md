@@ -2,7 +2,7 @@
 
 **Shared `kernel.yaml` plus a small YAML file per device. DroidSpaces is mandatory for every target.**
 
-KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports, one pinned LLVM toolchain, and device-specific AnyKernel3 ZIPs. Supported targets: OnePlus 9R (`lemonades`, SM8250) and **Motorola moto g10 power (XT2127-4, LineageOS variant 2)** under `capri` (Snapdragon SM4250, using the SM6225/Bengal-family source tree). The regular moto g10 is variant 1 of the same LineageOS `capri` build; `caprip` is a different device (moto g30). Each target uses its official LineageOS kernel source and defconfig.
+KernelForge builds LineageOS 24.0 kernels with shared DroidSpaces config, a common LXC cgroup patch, optional systemd backports and one pinned LLVM toolchain. OnePlus 9R (`lemonades`, SM8250) retains its standard AnyKernel3 ZIP. **Motorola moto g10 power (XT2127-4, LineageOS variant 2)** uses a **non-flashable Capri payload ZIP** for offline image generation. The regular moto g10 is variant 1 of the same LineageOS `capri` build; `caprip` is a different device (moto g30). Each target uses its official LineageOS kernel source and defconfig.
 
 ## Run
 
@@ -13,12 +13,12 @@ python3 -m pip install -r requirements.txt
 ./build.sh validate --device lemonades
 ./build.sh validate --device capri
 ./build.sh build --device capri --dry-run
-./build.sh build --device capri -j 8       # Compiles + packages DroidSpaces-capri.zip
+./build.sh build --device capri -j 8       # Compiles + packages DroidSpaces-capri-payload.zip
 ./build.sh build --device lemonades -j 8   # OnePlus 9R (default)
 ./build.sh package --device capri          # Repackage previously built capri images
 ~~~
 
-The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the **current `lineage-24.0` branch HEAD at each build** (no kernel commit pins), applies enabled shared patches, copies the mandatory DroidSpaces fragment, merges device-specific defconfig fragments using the kernel's Kconfig tools, compiles, and packages AnyKernel3. KernelForge no longer compares the final `.config` against every requested symbol: Kconfig itself resolves unsupported or unavailable options. **A successful build does not prove every DroidSpaces feature is enabled**; inspect the generated `.config` and test container functionality before flashing. Workspaces are isolated: `.work/kernel/` for lemonades and `.work/kernel-capri/` for capri. LLVM is shared at `.work/_toolchains/kernel/llvm`; ccache is shared at `.work/_ccache`. Preparation resets only the selected managed source checkout.
+The builder merges `kernel.yaml` with `devices/<codename>.yaml`, fetches the **current `lineage-24.0` branch HEAD at each build** (no kernel commit pins), applies enabled shared patches, copies the mandatory DroidSpaces fragment, merges device-specific defconfig fragments using the kernel's Kconfig tools, compiles, and packages the selected device. Kconfig resolves unsupported or unavailable options. **A successful build does not prove every DroidSpaces feature is enabled**; inspect the generated `.config` and test container functionality. Workspaces are isolated: `.work/kernel/` for lemonades and `.work/kernel-capri/` for capri. LLVM is shared at `.work/_toolchains/kernel/llvm`; ccache at `.work/_ccache`. Preparation resets only the selected managed source checkout.
 
 The commands are not a complete LineageOS ROM build. Integration into an Android device tree, SELinux, permissions and userspace runtime remains separate.
 
@@ -34,23 +34,21 @@ SUSFS are not enabled. The BakaSU fragment is merged after the DroidSpaces
 fragment; DroidSpaces features, including `CONFIG_SYSVIPC`, remain requested.
 
 Install the matching **BakaSU manager APK**, then explicitly grant root to the
-apps that need it. The kernel ZIP does not install the manager or grant apps
+apps that need it. Neither package installs the manager or grants apps
 root automatically. Use the upstream [manager installation instructions](https://bakasu.org/guide/install/);
 they currently point to development manager builds. Built-in BakaSU does not
 require Magisk boot-image patching or a separate KernelSU loadable module.
-Existing AnyKernel3 handling of an already patched boot image is unchanged.
+Lemonades AnyKernel3 handling of an already patched boot image is unchanged.
 
 Set `root.enabled: false` in shared `kernel.yaml` before rebuilding to omit
 BakaSU, its hooks, and its config fragment. Repackaging an existing kernel
 cannot enable or disable built-in root.
 
-Verification: the manual-hook patch applies to both inspected LineageOS 24.0
-4.19 source snapshots and passes the pinned BakaSU hook-presence checker.
-CLI validation and default-root build previews also pass. These checks are
-**not** a full kernel compilation, final Kconfig verification, or device root
-test. Inspect the built `.config` for `CONFIG_KSU=y` and
-`CONFIG_KSU_MANUAL_HOOK=y`, then verify manager recognition, app approval, and
-root access on the device before treating either ZIP as validated.
+The manual-hook patch applies to both inspected LineageOS 24.0 4.19 source
+snapshots and passes the pinned BakaSU hook-presence checker. CLI validation
+and default-root build previews also pass. See **Verified Capri run** below
+for the compiled configuration and physical boot evidence. Those results do
+not validate OnePlus hardware or future upstream branch changes.
 
 
 ## Layout
@@ -96,7 +94,7 @@ The upstream 4.19 series has ten patches for newer systemd. The feature-probe ob
 
 The original 0006 patch conflicts because LineageOS 24 already has clone3 (435), close_range (436), epoll_pwait2 (441) and syscall count 442. Its adapted version changes only the missing 439 entries while keeping these pre-existing entries and counts.
 
-All four modern-systemd backports (0003–0006) are included but **disabled on both devices by default**. Only the shared LXC cgroup naming patch is enabled. Its target function has matching context in both vendor kernel source trees, but capri has not been compiled or boot-tested. The LineageOS-specific `0006` adaptation is not automatically safe to enable on other vendors. Reprobe and port optional patches per device before using systemd 260+. The DroidSpaces userspace runtime also needs its mount-API fallback.
+All four modern-systemd backports (0003–0006) are included but **disabled on both devices by default**. The enabled shared LXC cgroup patch has matching context in both vendor kernel trees. The LineageOS-specific `0006` adaptation is not automatically safe to enable on other vendors. Reprobe and port optional patches per device before using systemd 260+. The DroidSpaces userspace runtime also needs its mount-API fallback.
 
 **When changing source kernels, re-run upstream tools/probe-kernel.sh and adjust the patches list.** Do not blindly apply all 4.19 patches to every vendor tree.
 
@@ -136,9 +134,9 @@ The checksum-verified GitHub release archive is cached and shared, while source/
 
 ## GitHub Actions and ccache
 
-GitHub Actions runs **only when manually dispatched**: commits pushed to `main` and pull requests do **not** trigger validation or builds. Go to **Actions → KernelForge → Run workflow** and choose `both` (default), `lemonades`, or `capri`; the requested device jobs compile. Each manual run validates both configurations and executes tests before building the selected device(s). Every successful compilation uploads an early `compiled-<device>-<run_number>` artifact containing `Image` and `kernel.config` **before AnyKernel3 packaging**; Capri also includes `modules.tar.gz` with its matching module binaries and ABI inputs. When packaging succeeds, a separate `droidspaces-<device>-<run_number>` artifact contains the flashable ZIP. Both have 14-day retention. Files are staged under visible `dist/` paths because `actions/upload-artifact` ignores files inside hidden `.work/` by default. Manual runs have independent workflow concurrency groups and are not automatically cancelled. GitHub Releases publishing is not enabled.
+GitHub Actions runs **only when manually dispatched**: commits and pull requests do **not** trigger builds. Choose `both` (default), `lemonades`, or `capri` in the existing workflow. Each run validates both configurations and executes tests before compilation. Every successful compilation uploads `compiled-<device>-<run_number>` containing `Image` and `kernel.config` **before packaging**; Capri also includes `modules.tar.gz` with its matching module binaries and ABI inputs. Package artifact names follow the configured output filename: `DroidSpaces-capri-payload-<run_number>` contains the **non-flashable** payload, and `DroidSpaces-lemonades-<run_number>` contains the unchanged standard AnyKernel3 ZIP. Both have 14-day retention. Files are staged under visible `dist/` paths. Manual runs are independent and do not automatically cancel. GitHub Releases publishing is not enabled. No workflow flashes a phone.
 
-Each matrix build compiles with `-j "$(nproc)"`, using the runner's available processing units instead of hardcoded parallelism. Jobs restore the shared LLVM toolchain and device-specific ccache, then **explicitly save ccache immediately after compilation and before packaging**. Partial compilation caches are also saved on ordinary build failures; cancelled jobs cannot reliably save their cache. The compiled `Image` and config are uploaded before ZIP packaging so packaging errors cannot discard finished kernel outputs. Official GitHub Actions use checkout v7, setup-python v7, cache v6, and upload-artifact v7. Capri has completed compilation and packaging on GitHub Actions, but physical boot remains unverified.
+Each matrix build compiles with `-j "$(nproc)"`, using the runner's available processing units instead of hardcoded parallelism. Jobs restore the shared LLVM toolchain and device-specific ccache, then **explicitly save ccache immediately after compilation and before packaging**. Partial compilation caches are also saved on ordinary build failures; cancelled jobs cannot reliably save their cache. The compiled `Image` and config are uploaded before ZIP packaging so packaging errors cannot discard finished kernel outputs. Official GitHub Actions use checkout v7, setup-python v7, cache v6, and upload-artifact v7.
 
 To use ccache locally (including on ARM64 hosts with a native LLVM toolchain):
 
@@ -157,70 +155,143 @@ build:
     max_size: 2G
 ~~~
 
-KernelForge invokes `CC=ccache clang`, `HOSTCC=ccache clang`, and `HOSTCXX=ccache clang++` in **both** Make invocations, while keeping `LLVM=1 LLVM_IAS=1`. No GCC toolchain is introduced. Local cache files are stored at `.work/_ccache`; CI overrides `CCACHE_DIR` to `.ccache` so GitHub Actions can persist the cache. Set `enabled: false` if ccache is unavailable; initial builds are typically cache misses, and linking and device-tree generation are not cached by ccache. This setup has passed local tests and dry-runs; the actual GitHub-hosted kernel compile still needs a successful workflow run.
+KernelForge invokes `CC=ccache clang`, `HOSTCC=ccache clang`, and `HOSTCXX=ccache clang++` in **both** Make invocations, while keeping `LLVM=1 LLVM_IAS=1`. No GCC toolchain is introduced. Local cache files are stored at `.work/_ccache`; CI overrides `CCACHE_DIR` to `.ccache` so GitHub Actions can persist the cache. Set `enabled: false` if ccache is unavailable; initial builds are typically cache misses, and linking and device-tree generation are not cached by ccache.
 
-## Device-specific AnyKernel3 packaging
+## Device-specific packaging
 
-`kernel.yaml` supplies the pinned AnyKernel3 template and common boot policy.
-`devices/<codename>.yaml` supplies the source, configuration, image mapping and
-installation policy. Source branches still track their latest `lineage-24.0`
-head; adding matched modules does not disable DroidSpaces features such as
-`CONFIG_SYSVIPC` and does not relax module CRC checks.
+`kernel.yaml` supplies pinned AnyKernel3 tooling and shared boot defaults.
+Lemonades keeps its standard `DroidSpaces-lemonades.zip` installer and boot/slot
+policy unchanged. Capri sets `package.type: manual-images` and produces
+`DroidSpaces-capri-payload.zip`. **This payload is not flashable: never sideload
+it or install it in recovery or a kernel-manager app. Previous Capri sideload
+artifacts are unsafe and must not be used.** The recovery-time module installer
+has been removed; `anykernel3` packages cannot include matched modules.
 
-| Target | ZIP contents and installation |
-|---|---|
-| `lemonades` | Kernel `Image` only; existing boot/slot policy is unchanged. |
-| `capri` | Kernel plus every module in `modules.order`; updates active-slot `boot`, `/vendor/lib/modules`, and the early modules in active-slot `vendor_boot`. Codename checking is required. |
+The Capri ZIP contains only `boot-files/Image`, matched vendor and early-boot
+module trees and checksum manifests, pinned `tools/magiskboot` and `tools/fec`,
+and `payload.json`. The root manifest identifies Capri and the kernel release
+and hashes every other archive member. There is no recovery updater, AnyKernel
+core, `anykernel.sh` or installation script. The pinned AnyKernel checkout is
+used solely as a source for the two offline tools.
 
 Capri's `package.modules.aliases` follows the official LineageOS
 [`TARGET_MODULE_ALIASES`](https://github.com/LineageOS/android_device_motorola_sm6225-common/blob/lineage-24.0/BoardConfigCommon.mk).
-The inspected November 5 ROM contains 43 modules, including 29 renamed files.
-`package.modules.vendor_boot` selects `nova_0flash_mmi`, `ili9882_mmi`, and `exfat`,
-in that order, for normal early boot. Their copies in both module locations must
-match the kernel. This policy is specific to Capri; do not copy another device's
-empty `modules.load` or recovery-only load list.
+The November 5 ROM contains 43 modules, including 29 renamed files.
+`package.modules.vendor_boot` selects `nova_0flash_mmi.ko`, `ili9882_mmi.ko` and
+`exfat.ko`, in that order. Packaging requires the complete build output:
+`Image`, `modules.order`, every listed `.ko`, `Module.symvers`, and
+`include/config/kernel.release`. Module release strings, imported symbol CRCs
+and dependency closure are checked before staging. LLVM strips debug information
+from staged copies only; signed modules cannot be stripped. Official filenames,
+load order, dependency metadata and checksums stay together. Neither this
+cutover nor BakaSU disables `CONFIG_SYSVIPC` or relaxes module ABI validation.
 
-Packaging requires the complete output tree: `Image`, `modules.order`, every
-listed `.ko`, `Module.symvers`, and `include/config/kernel.release`. It verifies
-module release strings, imported symbol CRCs and dependency closure before
-staging. LLVM strips debug information from staged copies, not build originals;
-already-signed modules cannot be stripped this way. Installed filenames,
-dependency/alias metadata and checksum manifests are generated together.
-The existing vendor `modules.load` is not replaced.
+### Generate complete Capri images offline
 
-The recovery-only installer checks the active slot, vendor filesystem, module
-coverage, payload checksums and vendor boot header v3 before changing the kernel.
-It installs the matched vendor files with checked writes, updates `boot`, then
-repackages `vendor_boot` with the selected early modules. Partition readback and
-module checksums detect failed writes; shell failures attempt to restore the
-original boot images and vendor files together. Temporary backups are retained
-on failure. **This is not power-loss-atomic. Keep external backups and a working
-recovery/fastboot restore method.**
+Use three **matching original images from the exact installed ROM build**,
+not images from another release or a previously modified kernel. Confirm
+model `XT2127-4`, codename `capri`, and the firmware baseline in the
+[official variant-2 guide](https://lineageos.github.io/lineage_wiki/devices/capri/install/variant2/).
+Keep the originals and an independent restore method. No replacement DTB/DTBO
+is supplied: unrelated ramdisk data and the original device-tree data are
+retained. Keep `CONFIG_CAPRI_DTB=y`; `CAPRIP` belongs to the Moto G30.
 
-No replacement DTB or DTBO is shipped. The installer retains unrelated ramdisk
-contents and verifies the vendor boot DTB is unchanged. The kernel must remain
-compatible with the ROM's device-tree data. Keep `CONFIG_CAPRI_DTB=y`; `CAPRIP`
-belongs to the Moto G30 and is not a G10 Power variant.
+The offline generator needs Python dependencies from `requirements.txt`,
+e2fsprogs (`debugfs`, `e2fsck`) and `avbtool` on `PATH`. On an x86_64 host,
+install QEMU user-mode support (`qemu-arm`, commonly from `qemu-user`) for
+the bundled ARM Android `magiskboot`. The appropriate QEMU executable is
+selected automatically for nonnative tools.
 
-**Before installing on Moto G10 Power:** confirm model `XT2127-4`, codename
-`capri`, the LineageOS 24.0 Android 11 firmware baseline, and matching ROM images
-from the [official variant-2 guide](https://lineageos.github.io/lineage_wiki/devices/capri/install/variant2/).
-Use a compatible recovery that exposes the active vendor partition as ext4 and
-can safely remount it writable. Verified/unsupported mappings, missing modules
-and failed remounts must abort; the installer does not disable AVB or force-load
-modules. Installation from a booted Android kernel-manager app is unsupported.
-Never cross-flash Capri and OnePlus ZIPs.
+Install a native Android `fec` encoder on `PATH` as well. The bundled Android
+`fec` is dynamically linked and QEMU alone cannot supply its Android linker
+and libraries; that failure aborts image construction rather than dropping FEC.
+For the local smoke run, native `fec` and its matching `libc++.so` came from
+[AOSP build-tools commit `07b44a63150de430daa6338a18067e7521a458e1`](https://android.googlesource.com/kernel/prebuilts/build-tools/+/07b44a63150de430daa6338a18067e7521a458e1/).
+Keep the prebuilt's `bin/` and `lib64/` layout and add its `bin/` to `PATH`.
 
-Rebuild with `./build.sh build --device capri -j 8`, or repackage a complete
-existing output tree with `./build.sh package --device capri`. GitHub Actions
-retains Capri's modules and ABI inputs as `modules.tar.gz` alongside `Image` and
-`kernel.config` **before** ZIP packaging. The earlier image-only downloads do
-not contain the module set and cannot be repaired by repacking alone.
+~~~bash
+python -m kernelforge.images \
+  --payload .work/kernel-capri/DroidSpaces-capri-payload.zip \
+  --boot /path/to/matching-originals/boot.img \
+  --vendor-boot /path/to/matching-originals/vendor_boot.img \
+  --vendor /path/to/matching-originals/vendor.img \
+  --output /path/to/existing-parent/capri-images
+~~~
 
-This follows the [Moto G84 matched-module installer pattern](https://github.com/humandroid-2002/AnyKernel3/tree/sm6375),
-with Capri's actual filenames and normal early-load policy. Local packaging and
-image-repacking checks do not establish physical boot compatibility; generated
-ZIPs remain testing artifacts until a device boot and hardware check pass.
+The output directory must not already exist; its parent must exist. The command
+operates on local copies and atomically produces complete `boot.img`,
+`vendor_boot.img`, `vendor.img` and `manifest.json`. It does not contact or
+flash a device.
+
+Offline processing rebuilds AVB hashes, the vendor hashtree, FEC and image
+footers while preserving partition sizes and supported metadata. This does
+**not** recreate original external `vbmeta` signatures or establish that the
+device's verified-boot chain will trust the new images. Matching module CRCs,
+successful image generation and clean filesystem checks are not physical boot
+or hardware validation. Do not disable AVB, erase partitions, or force-load
+modules to work around a mismatch.
+
+### Verified Capri run
+
+On 2026-11-10, the kernel from [GitHub Actions run 18](https://github.com/divyam234/kernel-forge/actions/runs/42843641468)
+was repackaged into complete images using the November 5 LineageOS 24.0
+originals, manually flashed to slot `b`, and completed Android boot.
+
+- Running kernel: `4.19.325-cip136-st20-perf-g1da2d0861244-dirty`.
+- The compiled Image retained SYSVIPC, IPC namespaces, CFI/LTO, module versioning
+  and built-in BakaSU at `548d1dda060ca198823d8808804d01f5209ef4a9`.
+- All 43 module files and three generated vendor metadata files matched the
+  payload after boot. All three early modules loaded; 42 modules were loaded
+  overall, with the alternative `fpc1020_mmi` driver not loaded.
+- Captured kernel logs contained no module CRC/symbol-loading errors or
+  panic/Oops/CFI failures. BakaSU initialized in built-in mode.
+- The device's existing top-level `vbmeta_b` had flags `3` and its live vendor
+  mapping was linear. Neither vbmeta partition was changed. This is an observed
+  device configuration, not a recommendation to disable verification elsewhere.
+
+The new payload packaging and offline generator passed 92 local tests and a
+full-ROM generation smoke run. The workflow's new non-flashable artifact format
+has not yet been exercised by a subsequent GitHub run. Physical boot evidence
+does not establish complete hardware, app-root, or container workload coverage.
+
+For DroidSpaces userspace setup, the [official Android guide](https://www.droidspaces.org/docs/installation-android.html)
+says the app installs its backend and a small root-manager boot module itself.
+Grant DroidSpaces root in the manager and reboot when requested; a separate
+manually downloaded daemon module is not required for that documented setup.
+
+### Manual flashing only, with an explicit slot
+
+The following is a manual operator sequence, not a command run by KernelForge
+or CI. Back up first and verify the output images and ROM identity. Enter the
+bootloader manually, then query the current slot; **do not assume `a` or `b`**:
+
+~~~bash
+fastboot getvar product
+fastboot getvar current-slot
+# Set SLOT to the exact a or b returned above; stop if missing or unexpected.
+read -r -p 'Verified current slot (a or b): ' SLOT
+case "$SLOT" in a|b) ;; *) echo "Invalid slot"; exit 1 ;; esac
+fastboot --slot="$SLOT" flash boot /path/to/existing-parent/capri-images/boot.img
+fastboot --slot="$SLOT" flash vendor_boot /path/to/existing-parent/capri-images/vendor_boot.img
+fastboot reboot fastboot
+fastboot getvar is-userspace
+fastboot getvar current-slot
+# Continue only if is-userspace=yes and current-slot still equals $SLOT.
+fastboot --slot="$SLOT" flash vendor /path/to/existing-parent/capri-images/vendor.img
+~~~
+
+`vendor` is a logical partition and must be flashed in **fastbootd**, not
+bootloader fastboot. Stop on any error or changed slot; do not mix slots or
+use `--slot=all`. No erase, verification-disabling flag, automatic flashing,
+or automatic final reboot is provided. A successful flash still does not prove
+boot, BakaSU manager operation, SELinux, radio, Wi-Fi or other hardware works.
+Never cross-flash Capri and OnePlus packages.
+
+Rebuild with `./build.sh build --device capri -j 8` or repackage a complete
+output tree with `./build.sh package --device capri`. The compiled-module
+artifact is retained independently if packaging fails. Earlier image-only
+downloads lack the module set and cannot be repaired by repacking alone.
+
 
 ## Source credits
 
@@ -228,4 +299,4 @@ DroidSpaces configuration source: https://github.com/JackA1ltman/dreamworld_onep
 LXC cgroup change: Dreamworld commit 60c147cf1f33c09828128478ec602837e9279a05.
 Systemd backports: https://github.com/Droidspaces/droidspaces-backports (0006 adapted as documented).
 
-The repository has only local commits; no remote push or flashable device build has been completed here.
+No commands in this documentation are run automatically against a phone.

@@ -93,10 +93,11 @@ class GithubActionsTests(unittest.TestCase):
         package_stage = next(s for s in steps if s.get("id") == "package")
         self.assertIn("dist/packages/$device/", package_stage["run"])
         self.assertIn("always()", package_stage["if"])
-        zip_upload = next(s for s in steps if s.get("name") == "Upload packaged AnyKernel3 ZIP")
+        zip_upload = next(s for s in steps if s.get("uses") == "actions/upload-artifact@v7"
+                          and "steps.package.outcome" in s.get("if", ""))
         self.assertEqual(zip_upload["uses"], "actions/upload-artifact@v7")
         self.assertIn("dist/packages/", zip_upload["with"]["path"])
-        self.assertIn("DroidSpaces-", zip_upload["with"]["path"])
+        self.assertIn("steps.package.outputs.filename", zip_upload["with"]["path"])
         self.assertNotIn(".work/", zip_upload["with"]["path"])
         self.assertEqual(zip_upload["with"]["if-no-files-found"], "error")
         self.assertIn("steps.package.outcome == 'success'", zip_upload["if"])

@@ -172,12 +172,18 @@
       "additionalProperties": false,
       "required": [
         "type",
-        "anykernel",
-        "boot"
+        "anykernel"
+      ],
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "manual-images"}}, "required": ["type"]},
+          "then": {"required": ["modules"]},
+          "else": {"required": ["boot"], "not": {"required": ["modules"]}}
+        }
       ],
       "properties": {
         "type": {
-          "const": "anykernel3"
+          "enum": ["anykernel3", "manual-images"]
         },
         "output": {
           "type": "string",
