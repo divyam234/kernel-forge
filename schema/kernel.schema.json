@@ -304,6 +304,8 @@
         "directory": {
           "$ref": "#/$defs/path"
         }
+,
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
       }
     }
   }

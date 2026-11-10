@@ -1,3 +1,4 @@
+import hashlib
 import io
 import os
 from pathlib import Path
@@ -14,14 +15,13 @@ class LLVMToolchainTests(unittest.TestCase):
     def test_yaml_has_exactly_one_pinned_llvm_toolchain(self):
         cfg = cli.load_config()
         tc = cfg["toolchain"]
-        self.assertEqual(set(tc), {"url", "ref", "commit", "directory"})
-        self.assertEqual(tc["ref"], "main-kernel")
-        self.assertEqual(tc["commit"], "c9ed23e2ba198658b630d4b10e09fa980cd43119")
-        self.assertEqual(tc["directory"], "clang-r614150")
-        self.assertEqual(tc["url"], "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86")
+        self.assertEqual(set(tc), {"url", "ref", "sha256"})
+        self.assertEqual(tc["ref"], "20261107")
+        self.assertEqual(tc["sha256"], "c0786cefe7db077db22dd4999842c1a57d15da45d7c78dd6d53189078a52b67f")
+        self.assertEqual(tc["url"], "https://github.com/greenforce-project/greenforce_clang/releases/download/20261107/gf-clang-24.0.0-20261107.tar.gz")
         self.assertEqual(cli.load_config("capri")["toolchain"], tc)
 
-    def test_google_clang_archive_extraction_and_shared_cache(self):
+    def test_release_archive_extraction_and_shared_cache(self):
         cfg = cli.load_config("capri")
         archive_bytes = io.BytesIO()
         with tarfile.open(fileobj=archive_bytes, mode="w:gz") as archive:
@@ -31,6 +31,7 @@ class LLVMToolchainTests(unittest.TestCase):
                 entry.mode = 0o755
                 entry.size = len(payload)
                 archive.addfile(entry, io.BytesIO(payload))
+        cfg["toolchain"]["sha256"] = hashlib.sha256(archive_bytes.getvalue()).hexdigest()
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp) / ".work"
             with (
@@ -42,10 +43,22 @@ class LLVMToolchainTests(unittest.TestCase):
                 self.assertTrue((bindir / "clang").is_file())
                 self.assertTrue((bindir / "ld.lld").is_file())
                 self.assertTrue((bindir / "clang").stat().st_mode & 0o111)
-                self.assertEqual(cli.bootstrap_toolchain(cli.WORK_NAME, cli.load_config()), bindir)
+                self.assertEqual(cli.bootstrap_toolchain(cli.WORK_NAME, cfg), bindir)
                 self.assertEqual(download.call_count, 1)
-                self.assertIn("/+archive/" + cfg["toolchain"]["commit"] + "/clang-r614150.tar.gz",
-                              download.call_args.args[0])
+                self.assertEqual(download.call_args.args[0], cfg["toolchain"]["url"])
+
+
+    def test_release_archive_rejects_wrong_checksum(self):
+        cfg = cli.load_config("capri")
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.object(cli, "WORK", Path(tmp) / ".work"),
+                patch.dict(os.environ, {"KERNELFORGE_LLVM_BIN": ""}),
+                patch.object(cli, "urlopen", return_value=io.BytesIO(b"tampered")),
+            ):
+                with self.assertRaisesRegex(cli.ForgeError, "SHA256 mismatch"):
+                    cli.bootstrap_toolchain(cli.workspace_name("capri"), cfg)
+                self.assertFalse((Path(tmp) / ".work" / "_toolchains" / "kernel" / "llvm").exists())
 
 
     def test_llvm_override_is_single_complete_directory(self):

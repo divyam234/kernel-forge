@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 from urllib.request import urlopen
 import zipfile
 
@@ -183,7 +185,7 @@ def load_config(device=DEFAULT_DEVICE):
     require(isinstance(src.get("ref"), str) and bool(src["ref"]), "source.ref is required")
 
     tc = data.get("toolchain")
-    fields(tc, {"url", "ref", "commit", "directory"}, "toolchain")
+    fields(tc, {"url", "ref", "commit", "directory", "sha256"}, "toolchain")
     require(isinstance(tc.get("url"), str) and tc["url"].startswith("https://"),
             "toolchain.url must be HTTPS")
     require(isinstance(tc.get("ref"), str) and bool(tc["ref"]),
@@ -194,6 +196,10 @@ def load_config(device=DEFAULT_DEVICE):
     if "directory" in tc:
         relative(tc["directory"], "toolchain.directory")
         require(tc.get("commit") is not None, "toolchain.commit is required for a directory archive")
+    if "sha256" in tc:
+        require(isinstance(tc["sha256"], str) and bool(re.fullmatch(r"[a-f0-9]{64}", tc["sha256"])),
+                "toolchain.sha256 must be a 64-character SHA256 digest")
+        require(not tc.get("directory"), "toolchain.sha256 cannot be combined with toolchain.directory")
 
     build = data.get("build")
     fields(build, {"arch", "defconfig", "fragments", "targets", "artifacts", "ccache"}, "build")
@@ -313,13 +319,13 @@ def bootstrap_toolchain(name, data, dry=False):
     else:
         spec = data["toolchain"]
         dest = WORK / "_toolchains" / WORK_NAME / "llvm"  # Shared by every device.
-        if spec.get("directory"):
-            # Gitiles archive downloads only the selected Google Clang release,
-            # not the enormous repository containing all historical releases.
-            archive_url = (spec["url"].rstrip("/") + "/+archive/" + spec["commit"]
+        if spec.get("sha256") or spec.get("directory"):
+            # Prefer a small, checksum-verified GitHub release archive over Gitiles.
+            archive_url = (spec["url"] if spec.get("sha256") else
+                           spec["url"].rstrip("/") + "/+archive/" + spec["commit"]
                            + "/" + spec["directory"] + ".tar.gz")
             stamp = dest / ".kernelforge-toolchain"
-            identity = "\n".join((spec["url"], spec["commit"], spec["directory"])) + "\n"
+            identity = "\n".join((archive_url, spec.get("sha256", ""))) + "\n"
             if not stamp.is_file() or stamp.read_text(encoding="utf-8") != identity:
                 print("DOWNLOAD", archive_url, "->", dest, flush=True)
                 if not dry:
@@ -328,9 +334,22 @@ def bootstrap_toolchain(name, data, dry=False):
                         shutil.rmtree(dest)
                     dest.mkdir(parents=True, exist_ok=True)
                     try:
-                        with urlopen(archive_url, timeout=120) as response:
-                            with tarfile.open(fileobj=response, mode="r|gz") as bundle:
-                                bundle.extractall(dest, filter="data")
+                        if spec.get("sha256"):
+                            with tempfile.TemporaryFile() as archive_file:
+                                digest = hashlib.sha256()
+                                with urlopen(archive_url, timeout=120) as response:
+                                    while chunk := response.read(1024 * 1024):
+                                        archive_file.write(chunk)
+                                        digest.update(chunk)
+                                require(digest.hexdigest() == spec["sha256"],
+                                        "LLVM release SHA256 mismatch: " + archive_url)
+                                archive_file.seek(0)
+                                with tarfile.open(fileobj=archive_file, mode="r:gz") as bundle:
+                                    bundle.extractall(dest, filter="data")
+                        else:
+                            with urlopen(archive_url, timeout=120) as response:
+                                with tarfile.open(fileobj=response, mode="r|gz") as bundle:
+                                    bundle.extractall(dest, filter="data")
                         stamp.write_text(identity, encoding="utf-8")
                     except Exception:
                         shutil.rmtree(dest)

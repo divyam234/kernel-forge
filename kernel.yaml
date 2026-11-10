@@ -3,10 +3,9 @@ apiVersion: kernelforge/v1
 # Shared settings for all devices. Device-specific source, defconfig and ZIP metadata
 # live in devices/<codename>.yaml. No build profiles.
 toolchain:
-  url: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
-  ref: main-kernel
-  commit: c9ed23e2ba198658b630d4b10e09fa980cd43119
-  directory: clang-r614150
+  url: https://github.com/greenforce-project/greenforce_clang/releases/download/20261107/gf-clang-24.0.0-20261107.tar.gz
+  ref: "20261107"
+  sha256: c0786cefe7db077db22dd4999842c1a57d15da45d7c78dd6d53189078a52b67f
 
 build:
   arch: arm64

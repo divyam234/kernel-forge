@@ -99,7 +99,7 @@ jobs:
       - name: Resolve pinned LLVM identity
         id: llvm
         run: |
-          echo "identity=$(python -c 'from kernelforge.cli import load_config; t=load_config()["toolchain"]; print(t.get("commit") or t["ref"])')" >> "$GITHUB_OUTPUT"
+          echo "identity=$(python -c 'from kernelforge.cli import load_config; t=load_config()["toolchain"]; print(t.get("sha256") or t.get("commit") or t["ref"])')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pinned LLVM toolchain
         uses: actions/cache@v4
