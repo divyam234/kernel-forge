@@ -20,7 +20,8 @@ CONFIG = ROOT / "kernel.yaml"
 WORK_NAME = "kernel"
 SHA = re.compile(r"^[a-f0-9]{40}$")
 SUPPORTED = {"apiVersion", "source", "toolchain", "build", "droidspaces", "overlays", "patches", "package"}
-TOOL_KEYS = ("clang", "gcc64", "gcc32")
+LLVM_TOOLS = ("clang", "clang++", "ld.lld", "llvm-ar", "llvm-nm",
+              "llvm-objcopy", "llvm-objdump", "llvm-readelf", "llvm-size", "llvm-strip")
 
 
 class ForgeError(Exception):
@@ -81,19 +82,14 @@ def load_config():
                 "source.commit must be a full 40-character SHA")
 
     tc = data.get("toolchain")
-    fields(tc, TOOL_KEYS, "toolchain")
-    for key in TOOL_KEYS:
-        obj = tc.get(key)
-        fields(obj, {"url", "ref", "commit", "prefix"}, "toolchain." + key)
-        require(isinstance(obj.get("url"), str) and obj["url"].startswith("https://"),
-                "toolchain." + key + ".url must be HTTPS")
-        require(isinstance(obj.get("ref"), str) and bool(obj["ref"]),
-                "toolchain." + key + ".ref is required")
-        if obj.get("commit") is not None:
-            require(bool(SHA.fullmatch(obj["commit"])), "toolchain." + key + ".commit must be full SHA")
-        if key != "clang":
-            require(isinstance(obj.get("prefix"), str) and bool(re.fullmatch(r"[A-Za-z0-9_-]+-", obj["prefix"])),
-                    "toolchain." + key + ".prefix must be an executable prefix ending in '-'")
+    fields(tc, {"url", "ref", "commit"}, "toolchain")
+    require(isinstance(tc.get("url"), str) and tc["url"].startswith("https://"),
+            "toolchain.url must be HTTPS")
+    require(isinstance(tc.get("ref"), str) and bool(tc["ref"]),
+            "toolchain.ref is required")
+    if tc.get("commit") is not None:
+        require(isinstance(tc["commit"], str) and bool(SHA.fullmatch(tc["commit"])),
+                "toolchain.commit must be a full 40-character SHA")
 
     build = data.get("build")
     fields(build, {"arch", "defconfig", "fragments", "targets", "artifacts", "strict_config"}, "build")
@@ -212,40 +208,47 @@ def prepare(name, data, dry=False):
 
 
 def bootstrap_toolchain(name, data, dry=False):
-    paths = {}
-    for key in TOOL_KEYS:
-        override = os.environ.get("KERNELFORGE_" + key.upper() + "_BIN")
-        if override:
-            bindir = Path(override).expanduser().resolve()
-            require(bindir.is_dir() or dry, "Toolchain override directory not found: " + str(bindir))
+    """Return one LLVM bin directory for every build phase."""
+    override = os.environ.get("KERNELFORGE_LLVM_BIN")
+    if override:
+        bindir = Path(override).expanduser().resolve()
+        require(bindir.is_dir() or dry, "LLVM override directory not found: " + str(bindir))
+    else:
+        spec = data["toolchain"]
+        dest = WORK / "_toolchains" / name / "llvm"
+        if not dest.exists():
+            if not dry:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+            run(["git", "clone", "--depth=1", "--branch", spec["ref"],
+                 spec["url"], str(dest)], dry=dry)
         else:
-            spec = data["toolchain"][key]
-            dest = WORK / "_toolchains" / name / key
-            if not dest.exists():
-                if not dry:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                run(["git", "clone", "--depth=1", "--branch", spec["ref"], spec["url"], str(dest)], dry=dry)
-            else:
-                require((dest / ".git").exists(), "Toolchain path is not a Git clone: " + str(dest))
-            if spec.get("commit"):
-                run(["git", "-C", str(dest), "fetch", "--depth=1", "origin", spec["commit"]], dry=dry)
-                run(["git", "-C", str(dest), "checkout", "--detach", spec["commit"]], dry=dry)
-            bindir = dest / "bin"
-        executable = "clang" if key == "clang" else data["toolchain"][key]["prefix"] + "gcc"
-        require((bindir / executable).is_file() or dry,
-                "Missing toolchain executable: " + str(bindir / executable))
-        paths[key] = bindir
-    return paths
+            require((dest / ".git").exists(), "LLVM path is not a Git clone: " + str(dest))
+            run(["git", "-C", str(dest), "remote", "set-url", "origin", spec["url"]], dry=dry)
+            run(["git", "-C", str(dest), "fetch", "--depth=1", "origin", spec["ref"]], dry=dry)
+        if spec.get("commit"):
+            run(["git", "-C", str(dest), "fetch", "--depth=1",
+                 "origin", spec["commit"]], dry=dry)
+            run(["git", "-C", str(dest), "checkout", "--detach",
+                 spec["commit"]], dry=dry)
+        else:
+            run(["git", "-C", str(dest), "checkout", "--detach", "FETCH_HEAD"], dry=dry)
+        bindir = dest / "bin"
+
+    missing = [tool for tool in LLVM_TOOLS if not (bindir / tool).is_file()]
+    require(not missing or dry, "LLVM toolchain incomplete at " + str(bindir)
+            + ": missing " + ", ".join(missing))
+    return bindir
 
 
-def build_environment(data, paths):
+def build_environment(data, llvm_bin):
     env = os.environ.copy()
-    env["PATH"] = str(paths["clang"]) + os.pathsep + env.get("PATH", "")
+    env["PATH"] = str(llvm_bin) + os.pathsep + env.get("PATH", "")
     env["ARCH"] = data["build"]["arch"]
     env["LLVM"] = "1"
-    env["CLANG_TRIPLE"] = "aarch64-linux-gnu-"
-    env["CROSS_COMPILE"] = str(paths["gcc64"] / data["toolchain"]["gcc64"]["prefix"])
-    env["CROSS_COMPILE_ARM32"] = str(paths["gcc32"] / data["toolchain"]["gcc32"]["prefix"])
+    env["LLVM_IAS"] = "1"
+    # No GCC binaries, prefixes or mixed compiler toolchains.
+    for var in ("CROSS_COMPILE", "CROSS_COMPILE_ARM32", "CLANG_TRIPLE"):
+        env.pop(var, None)
     return env
 
 
@@ -291,15 +294,13 @@ def verify_config(profile, data, dry=False):
 
 def build(name, data, jobs, dry=False):
     src = prepare(name, data, dry=dry)
-    tool_paths = bootstrap_toolchain(name, data, dry=dry)
-    env = build_environment(data, tool_paths)
+    llvm_bin = bootstrap_toolchain(name, data, dry=dry)
+    env = build_environment(data, llvm_bin)
     out = WORK / name / "out"
     if not dry:
         out.mkdir(parents=True, exist_ok=True)
     base = ["make", "ARCH=" + data["build"]["arch"], "O=" + str(out.resolve()),
-            "LLVM=1", "CLANG_TRIPLE=aarch64-linux-gnu-",
-            "CROSS_COMPILE=" + env["CROSS_COMPILE"],
-            "CROSS_COMPILE_ARM32=" + env["CROSS_COMPILE_ARM32"]]
+            "LLVM=1", "LLVM_IAS=1"]
     config_targets = ([data["build"]["defconfig"]] + data["build"].get("fragments", [])
                       + [data["droidspaces"]["target"]])
     run(base + config_targets, cwd=src, env=env, dry=dry)

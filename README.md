@@ -16,7 +16,7 @@ python3 -m pip install -r requirements.txt
 ./build.sh build -j 8
 ~~~
 
-The builder downloads a pinned kernel, applies patches in YAML order with git apply --check, copies the mandatory DroidSpaces fragment, merges all requested configs, checks the generated .config, and builds the kernel. Build results live under .work/kernel/out. Toolchains are downloaded into .work/_toolchains/kernel. Preparation resets and cleans only the managed .work/kernel/src checkout; don't hand-edit files there.
+The builder downloads a pinned kernel, applies patches in YAML order with git apply --check, copies the mandatory DroidSpaces fragment, merges all requested configs, checks the generated .config, and builds the kernel. Build results live under .work/kernel/out. The single pinned LLVM toolchain is stored under .work/_toolchains/kernel/llvm. Preparation resets and cleans only the managed .work/kernel/src checkout; don't hand-edit files there.
 
 The commands are not a complete LineageOS ROM build. Integration into an Android device tree, SELinux, permissions and userspace runtime remains separate.
 
@@ -80,16 +80,16 @@ The cgroup patch restores compatibility naming for LXC and can be disabled if th
 
 ## Compiler selection
 
-The default toolchains reproduce the *approach* in Dreamworld staging: LineageOS Clang plus Android GCC 4.9 ARM64 and ARM32. They contain Linux x86_64 binaries. For an ARM64 *build host* you must supply native compatible toolchains using:
+The official LineageOS 24 SM8250 kernel `build.config.common` specifies `clang-r416183b` with `LLVM=1`. This builder now uses **one pinned LLVM toolchain** for the entire build: Clang/Clang++ for compiling, LLD for linking, llvm-ar/llvm-nm/llvm-objcopy and the other LLVM binutils. Both configuration and compilation use `LLVM=1 LLVM_IAS=1`. No separate GCC ARM64/ARM32 compilers or cross-compile prefixes.
+
+The bundled prebuilt is for Linux x86_64. For a native ARM64 build host, provide a compatible full LLVM toolchain (including `ld.lld` and LLVM binutils), not merely a `clang` binary:
 
 ~~~bash
-export KERNELFORGE_CLANG_BIN=/opt/clang/bin
-export KERNELFORGE_GCC64_BIN=/opt/aarch64-gcc/bin
-export KERNELFORGE_GCC32_BIN=/opt/arm32-gcc/bin
+export KERNELFORGE_LLVM_BIN=/opt/llvm/bin
 ./build.sh build -j 8
 ~~~
 
-The kernel is pinned by SHA. For reproducibility, pin each toolchain by optional full commit SHA under toolchain sections, too.
+The `kernel.yaml` source and LLVM toolchain are both pinned to full Git commit hashes. If switching to another kernel version, check that it supports Clang's integrated assembler and the LLVM utilities before building. The build setup is not yet compiler-tested end to end.
 
 ## Safe packaging
 

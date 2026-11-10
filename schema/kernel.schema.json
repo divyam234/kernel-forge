@@ -18,24 +18,7 @@
       "$ref": "#/$defs/source"
     },
     "toolchain": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "clang",
-        "gcc64",
-        "gcc32"
-      ],
-      "properties": {
-        "clang": {
-          "$ref": "#/$defs/toolchainSource"
-        },
-        "gcc64": {
-          "$ref": "#/$defs/gccSource"
-        },
-        "gcc32": {
-          "$ref": "#/$defs/gccSource"
-        }
-      }
+      "$ref": "#/$defs/source"
     },
     "build": {
       "type": "object",
@@ -184,36 +167,6 @@
         "commit": {
           "type": "string",
           "pattern": "^[a-f0-9]{40}$"
-        }
-      }
-    },
-    "toolchainSource": {
-      "$ref": "#/$defs/source"
-    },
-    "gccSource": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "url",
-        "ref",
-        "prefix"
-      ],
-      "properties": {
-        "url": {
-          "type": "string",
-          "pattern": "^https://"
-        },
-        "ref": {
-          "type": "string",
-          "minLength": 1
-        },
-        "commit": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{40}$"
-        },
-        "prefix": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]+-$"
         }
       }
     }

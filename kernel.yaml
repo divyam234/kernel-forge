@@ -7,20 +7,13 @@ source:
   # Known LineageOS 24 snapshot. Update deliberately after reviewing patches.
   commit: 078365e5318de0a30a41f9707070b610bcd20f13
 
-# Same Clang + 32/64-bit GCC combination used by Dreamworld staging.
-# Linux x86_64 toolchains: for ARM64 builders provide toolchain overrides.
+# One LLVM toolchain throughout: config, compile, link, and CI.
+# Matches LineageOS SM8250's build.config.common: clang-r416183b + LLVM=1.
+# The pinned prebuilt is for x86_64 Linux; use KERNELFORGE_LLVM_BIN on ARM64 hosts.
 toolchain:
-  clang:
-    url: https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git
-    ref: lineage-20.0
-  gcc64:
-    url: https://github.com/JackA1ltman/Google-GCC-Android-4.9.git
-    ref: aarch64
-    prefix: aarch64-linux-android-
-  gcc32:
-    url: https://github.com/JackA1ltman/Google-GCC-Android-4.9.git
-    ref: arm32
-    prefix: arm-linux-androideabi-
+  url: https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git
+  ref: lineage-20.0
+  commit: 54220fd601050b350b2af7adc913089ebf0e7aed
 
 build:
   arch: arm64
