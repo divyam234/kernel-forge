@@ -17,7 +17,7 @@ class KernelTests(unittest.TestCase):
         self.assertEqual(cli.requested_settings(data)["CONFIG_MEMCG"], "y")
         self.assertEqual(cli.requested_settings(data)["CONFIG_OVERLAY_FS"], "y")
 
-    def test_backports_present_and_three_disabled_by_default(self):
+    def test_backports_present_and_disabled_by_default(self):
         data = cli.load_config()
         backports = data["patches"][:4]
         self.assertEqual(len(backports), 4)
@@ -26,7 +26,7 @@ class KernelTests(unittest.TestCase):
         self.assertTrue(backports[2]["file"].endswith("0005-utimensat-AT_EMPTY_PATH-support.patch"))
         self.assertTrue(backports[3]["file"].endswith("0006-faccessat2-lineage24.patch"))
         self.assertEqual([p.get("enabled", True) for p in backports],
-                         [False, False, False, True])
+                         [False, False, False, False])
         self.assertTrue(data["patches"][4]["file"].endswith("0001-lxc-cgroup-prefix.patch"))
         self.assertTrue(data["patches"][4]["enabled"])
         for p in data["patches"]:

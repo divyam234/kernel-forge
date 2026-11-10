@@ -42,8 +42,8 @@ overlays: []
 
 # Order is important. 0006 is ported to LineageOS 24's existing syscalls.
 # 0001, 0002, 0007-0009 are already present in this kernel; 0010 is x86.
-# Optional modern-systemd compatibility: leave three backports off by default.
-# Enable 0003, 0004, and 0005 together when targeting systemd 260+.
+# Optional modern-systemd backports: all four are retained but disabled by default.
+# Enable the missing features when targeting systemd 260+.
 patches:
   - file: patches/backports-4.19/0003-statx-add-mount-ID.patch
     enabled: false
@@ -52,7 +52,7 @@ patches:
   - file: patches/backports-4.19/0005-utimensat-AT_EMPTY_PATH-support.patch
     enabled: false
   - file: patches/backports-4.19/0006-faccessat2-lineage24.patch
-    enabled: true
+    enabled: false
   - file: patches/0001-lxc-cgroup-prefix.patch
     enabled: true
 
