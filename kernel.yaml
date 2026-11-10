@@ -3,9 +3,10 @@ apiVersion: kernelforge/v1
 # Shared settings for all devices. Device-specific source, defconfig and ZIP metadata
 # live in devices/<codename>.yaml. No build profiles.
 toolchain:
-  url: https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git
-  ref: lineage-20.0
-  commit: 54220fd601050b350b2af7adc913089ebf0e7aed
+  url: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+  ref: main-kernel
+  commit: c9ed23e2ba198658b630d4b10e09fa980cd43119
+  directory: clang-r614150
 
 build:
   arch: arm64

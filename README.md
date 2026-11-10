@@ -92,7 +92,7 @@ The cgroup patch restores compatibility naming for LXC and can be disabled if th
 
 ## Compiler selection
 
-KernelForge uses a single pinned `clang-r416183b` LLVM toolchain for all devices, with `LLVM=1 LLVM_IAS=1` for config and compilation. This compiler matches the original OnePlus SM8250 kernel setup; compatibility with Motorola's full kernel build still needs testing. No GCC cross-toolchain is mixed in.
+KernelForge uses **Google AOSP `clang-r614150` (LLVM 23) from `platform/prebuilts/clang/host/linux-x86`, branch `main-kernel`**, for **both capri and lemonades** with `LLVM=1 LLVM_IAS=1`. The shared `kernel.yaml` pins the verified Google commit for reproducible builds; the builder downloads only the `clang-r614150` subtree from Gitiles as a tar archive and caches it across devices. This compiler is intended to resolve the older toolchain's unsupported warning flags, but full kernel compilation and real-device boot remain unverified. No GCC cross-toolchain is mixed in.
 
 The bundled prebuilt is for Linux x86_64. For a native ARM64 build host, provide a compatible full LLVM toolchain (including `ld.lld` and LLVM binutils), not merely a `clang` binary:
 
@@ -101,7 +101,7 @@ export KERNELFORGE_LLVM_BIN=/opt/llvm/bin
 ./build.sh build -j 8
 ~~~
 
-The LLVM checkout is shared, while source/defconfig and build workspaces are device specific. **Kernel source commits are intentionally not pinned:** each `prepare` or `build` fetches the selected device's latest `lineage-24.0` branch head and records the resolved SHA in `.work/<device-workspace>/prepared.json` for traceability. The LLVM toolchain and AnyKernel3 template remain pinned for tooling stability. Upstream changes can break patches, compilation or boot compatibility, so verify results before flashing.
+The Google Clang archive installation is shared, while source/defconfig and build workspaces are device specific. **Kernel source commits are intentionally not pinned:** each `prepare` or `build` fetches the selected device's latest `lineage-24.0` branch head and records the resolved SHA in `.work/<device-workspace>/prepared.json` for traceability. The Google Clang version/revision and AnyKernel3 template remain pinned for tooling stability. Upstream changes can break patches, compilation or boot compatibility, so verify results before flashing.
 
 ## GitHub Actions and ccache
 

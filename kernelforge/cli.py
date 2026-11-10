@@ -10,6 +10,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+from urllib.request import urlopen
 import zipfile
 
 import yaml
@@ -181,7 +183,7 @@ def load_config(device=DEFAULT_DEVICE):
     require(isinstance(src.get("ref"), str) and bool(src["ref"]), "source.ref is required")
 
     tc = data.get("toolchain")
-    fields(tc, {"url", "ref", "commit"}, "toolchain")
+    fields(tc, {"url", "ref", "commit", "directory"}, "toolchain")
     require(isinstance(tc.get("url"), str) and tc["url"].startswith("https://"),
             "toolchain.url must be HTTPS")
     require(isinstance(tc.get("ref"), str) and bool(tc["ref"]),
@@ -189,6 +191,9 @@ def load_config(device=DEFAULT_DEVICE):
     if tc.get("commit") is not None:
         require(isinstance(tc["commit"], str) and bool(SHA.fullmatch(tc["commit"])),
                 "toolchain.commit must be a full 40-character SHA")
+    if "directory" in tc:
+        relative(tc["directory"], "toolchain.directory")
+        require(tc.get("commit") is not None, "toolchain.commit is required for a directory archive")
 
     build = data.get("build")
     fields(build, {"arch", "defconfig", "fragments", "targets", "artifacts", "ccache"}, "build")
@@ -307,24 +312,48 @@ def bootstrap_toolchain(name, data, dry=False):
         require(bindir.is_dir() or dry, "LLVM override directory not found: " + str(bindir))
     else:
         spec = data["toolchain"]
-        dest = WORK / "_toolchains" / WORK_NAME / "llvm"  # One common LLVM checkout for every device.
-        if not dest.exists():
-            if not dry:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-            run(["git", "clone", "--depth=1", "--branch", spec["ref"],
-                 spec["url"], str(dest)], dry=dry)
+        dest = WORK / "_toolchains" / WORK_NAME / "llvm"  # Shared by every device.
+        if spec.get("directory"):
+            # Gitiles archive downloads only the selected Google Clang release,
+            # not the enormous repository containing all historical releases.
+            archive_url = (spec["url"].rstrip("/") + "/+archive/" + spec["commit"]
+                           + "/" + spec["directory"] + ".tar.gz")
+            stamp = dest / ".kernelforge-toolchain"
+            identity = "\n".join((spec["url"], spec["commit"], spec["directory"])) + "\n"
+            if not stamp.is_file() or stamp.read_text(encoding="utf-8") != identity:
+                print("DOWNLOAD", archive_url, "->", dest, flush=True)
+                if not dry:
+                    require(not dest.is_symlink(), "LLVM toolchain path must not be a symlink")
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    dest.mkdir(parents=True, exist_ok=True)
+                    try:
+                        with urlopen(archive_url, timeout=120) as response:
+                            with tarfile.open(fileobj=response, mode="r|gz") as bundle:
+                                bundle.extractall(dest, filter="data")
+                        stamp.write_text(identity, encoding="utf-8")
+                    except Exception:
+                        shutil.rmtree(dest)
+                        raise
+            bindir = dest / "bin"
         else:
-            require((dest / ".git").exists(), "LLVM path is not a Git clone: " + str(dest))
-            run(["git", "-C", str(dest), "remote", "set-url", "origin", spec["url"]], dry=dry)
-            run(["git", "-C", str(dest), "fetch", "--depth=1", "origin", spec["ref"]], dry=dry)
-        if spec.get("commit"):
-            run(["git", "-C", str(dest), "fetch", "--depth=1",
-                 "origin", spec["commit"]], dry=dry)
-            run(["git", "-C", str(dest), "checkout", "--detach",
-                 spec["commit"]], dry=dry)
-        else:
-            run(["git", "-C", str(dest), "checkout", "--detach", "FETCH_HEAD"], dry=dry)
-        bindir = dest / "bin"
+            if not dest.exists():
+                if not dry:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                run(["git", "clone", "--depth=1", "--branch", spec["ref"],
+                     spec["url"], str(dest)], dry=dry)
+            else:
+                require((dest / ".git").exists(), "LLVM path is not a Git clone: " + str(dest))
+                run(["git", "-C", str(dest), "remote", "set-url", "origin", spec["url"]], dry=dry)
+                run(["git", "-C", str(dest), "fetch", "--depth=1", "origin", spec["ref"]], dry=dry)
+            if spec.get("commit"):
+                run(["git", "-C", str(dest), "fetch", "--depth=1",
+                     "origin", spec["commit"]], dry=dry)
+                run(["git", "-C", str(dest), "checkout", "--detach",
+                     spec["commit"]], dry=dry)
+            else:
+                run(["git", "-C", str(dest), "checkout", "--detach", "FETCH_HEAD"], dry=dry)
+            bindir = dest / "bin"
 
     missing = [tool for tool in LLVM_TOOLS if not (bindir / tool).is_file()]
     require(not missing or dry, "LLVM toolchain incomplete at " + str(bindir)

@@ -300,6 +300,9 @@
         "commit": {
           "type": "string",
           "pattern": "^[a-f0-9]{40}$"
+        },
+        "directory": {
+          "$ref": "#/$defs/path"
         }
       }
     }
