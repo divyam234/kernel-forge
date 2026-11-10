@@ -84,6 +84,7 @@ class GithubActionsTests(unittest.TestCase):
         for path in ("Image*", "*.zip", ".config"):
             self.assertIn(path, upload["with"]["path"])
         self.assertNotIn("dtb*", upload["with"]["path"])
+        self.assertEqual(upload["with"]["include-hidden-files"], "true")
 
 
 if __name__ == "__main__":
