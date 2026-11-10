@@ -54,6 +54,26 @@ patches:
   - file: patches/0001-lxc-cgroup-prefix.patch
     enabled: true
 
-# No generic flashable ZIP. Configure a specific, validated device template first.
+# AnyKernel3 ZIP is required for every build. Change this block for another device.
+# Kernel source, defconfig, patches and image outputs must ALSO match that device.
 package:
-  enabled: false
+  type: anykernel3
+  output: DroidSpaces-lemonades.zip
+  device:
+    name: OnePlus 9R
+    codenames: [lemonades]       # ro.product.device / ro.build.product
+    android_versions: ["17"]   # supported.versions in AnyKernel3
+  anykernel:
+    url: https://github.com/osm0sis/AnyKernel3.git
+    ref: master
+    commit: dca9dc370838d919d56c1f59ec78b27a14a72c68
+  boot:
+    partition: boot             # by-name block partition
+    slots: auto                 # auto, ab or single
+    ramdisk: auto
+    vbmeta: auto
+    install: write_boot        # write_boot or flash_boot
+  images:                      # paths relative to .work/kernel/out
+    arch/arm64/boot/Image: Image
+    arch/arm64/boot/dtb: dtb
+    arch/arm64/boot/dtbo.img: dtbo.img

@@ -60,6 +60,71 @@ def validate_item(item, allowed, label):
     require(type(item.get("enabled", True)) is bool, label + ".enabled must be boolean")
 
 
+def validate_package(cfg):
+    """Validate AnyKernel3 configuration before any Git or filesystem changes."""
+    fields(cfg, {"type", "output", "device", "anykernel", "boot", "images"}, "package")
+    require(cfg.get("type") == "anykernel3", "package.type must be anykernel3")
+    output = cfg.get("output")
+    require(isinstance(output, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.zip", output)),
+            "package.output must be a safe ZIP filename")
+
+    device = cfg.get("device")
+    fields(device, {"name", "codenames", "android_versions"}, "package.device")
+    name = device.get("name")
+    require(isinstance(name, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._+()-]{0,90}", name)),
+            "package.device.name must be an ASCII label without shell metacharacters")
+    codes = device.get("codenames")
+    require(isinstance(codes, list) and 1 <= len(codes) <= 20 and
+            all(isinstance(c, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", c) for c in codes)
+            and len(set(codes)) == len(codes),
+            "package.device.codenames must contain unique Android device codenames")
+    versions = device.get("android_versions")
+    require(isinstance(versions, list) and bool(versions) and
+            all(isinstance(v, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", v) for v in versions),
+            "package.device.android_versions must be version strings, e.g. ['17']")
+
+    upstream = cfg.get("anykernel")
+    fields(upstream, {"url", "ref", "commit"}, "package.anykernel")
+    require(isinstance(upstream.get("url"), str) and upstream["url"].startswith("https://"),
+            "package.anykernel.url must use HTTPS Git")
+    require(isinstance(upstream.get("ref"), str) and bool(upstream["ref"]),
+            "package.anykernel.ref is required")
+    require(isinstance(upstream.get("commit"), str) and bool(SHA.fullmatch(upstream["commit"])),
+            "package.anykernel.commit must be a pinned 40-character SHA")
+
+    boot = cfg.get("boot")
+    fields(boot, {"partition", "slots", "ramdisk", "vbmeta", "install"}, "package.boot")
+    require(isinstance(boot.get("partition"), str) and
+            bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", boot["partition"])),
+            "package.boot.partition must be a by-name partition (e.g. boot)")
+    require(boot.get("slots") in ("auto", "ab", "single"),
+            "package.boot.slots must be auto, ab or single")
+    require(boot.get("ramdisk") in ("auto", "gz", "lzo", "lzma", "xz", "bz2", "lz4", "lz4-l", "cpio", "none"),
+            "package.boot.ramdisk is an unsupported compression")
+    require(str(boot.get("vbmeta")) in ("auto", "0", "1"),
+            "package.boot.vbmeta must be auto, '0' or '1'")
+    require(boot.get("install") in ("write_boot", "flash_boot"),
+            "package.boot.install must be write_boot or flash_boot")
+
+    images = cfg.get("images")
+    require(isinstance(images, dict) and bool(images),
+            "package.images must map kernel output paths to ZIP paths")
+    require(any(isinstance(dst, str) and
+                re.fullmatch(r"(Image(?:[._-][A-Za-z0-9._-]+)?|zImage(?:[._-][A-Za-z0-9._-]+)?)", dst)
+                for dst in images.values()),
+            "package.images must contain a kernel Image or zImage destination")
+    destinations = []
+    for src, dst in images.items():
+        relative(src, "package image source")
+        path = relative(dst, "package image destination")
+        require(path.parts[0] not in ("tools", "META-INF", "modules", "ramdisk", "patch") and
+                path.as_posix() != "anykernel.sh",
+                "package.images cannot overwrite AnyKernel3 installer files")
+        destinations.append(path.as_posix())
+    require(len(destinations) == len(set(destinations)),
+            "package.images ZIP destinations must be unique")
+
+
 def load_config():
     require(CONFIG.is_file(), "Missing kernel.yaml")
     data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
@@ -120,15 +185,7 @@ def load_config():
         validate_item(item, {"file", "enabled"}, "patch " + str(n))
         local_path(item.get("file"), "patch.file")
 
-    package = data.get("package", {"enabled": False})
-    validate_item(package, {"enabled", "template", "images"}, "package")
-    if package.get("enabled", False):
-        local_path(package.get("template"), "package.template")
-        require(isinstance(package.get("images"), dict) and bool(package["images"]),
-                "package.images must map kernel output paths to names in ZIP")
-        for src_image, dst_image in package["images"].items():
-            relative(src_image, "package image source")
-            relative(dst_image, "package image destination")
+    validate_package(data.get("package"))
     return data
 
 
@@ -339,37 +396,93 @@ def build(name, data, jobs, dry=False):
     return out
 
 
+def bootstrap_anykernel(data, dry=False):
+    """Fetch the pinned upstream AnyKernel3 template, never modifying its checkout."""
+    spec = data["package"]["anykernel"]
+    folder = WORK / "_anykernel3"
+    if not folder.exists():
+        if not dry:
+            folder.parent.mkdir(parents=True, exist_ok=True)
+        run(["git", "clone", "--depth=1", "--branch", spec["ref"],
+             spec["url"], str(folder)], dry=dry)
+    else:
+        require((folder / ".git").is_dir(), "AnyKernel3 template path is not a Git checkout")
+        run(["git", "-C", str(folder), "remote", "set-url", "origin", spec["url"]], dry=dry)
+    run(["git", "-C", str(folder), "fetch", "--depth=1", "origin", spec["commit"]], dry=dry)
+    run(["git", "-C", str(folder), "checkout", "--detach", spec["commit"]], dry=dry)
+    return folder
+
+
+def render_anykernel(cfg):
+    """Generate an AnyKernel3 installer for the exact device declared in YAML."""
+    device = cfg["device"]
+    boot = cfg["boot"]
+    names = "\n".join(f"device.name{i}={name}" for i, name in enumerate(device["codenames"], 1))
+    versions = ", ".join(device["android_versions"])
+    slot = {"auto": "auto", "ab": "1", "single": "0"}[boot["slots"]]
+    install = ("dump_boot;\nwrite_boot;" if boot["install"] == "write_boot" else
+               "split_boot;\nflash_boot;\nflash_dtbo;")
+    return (f"### Generated by KernelForge from kernel.yaml; do not edit in ZIP.\n"
+            f"## AnyKernel3 installer, based on osm0sis/AnyKernel3.\n"
+            f"properties() {{ '\n"
+            f"kernel.string={device['name']} - DroidSpaces Kernel\n"
+            f"do.devicecheck=1\ndo.modules=0\ndo.systemless=0\n"
+            f"do.cleanup=1\ndo.cleanuponabort=0\n"
+            f"{names}\n"
+            f"supported.versions={versions}\n"
+            f"supported.patchlevels=\nsupported.vendorpatchlevels=\n"
+            f"'; }}\n\n"
+            f"BLOCK={boot['partition']};\n"
+            f"IS_SLOT_DEVICE={slot};\n"
+            f"RAMDISK_COMPRESSION={boot['ramdisk']};\n"
+            f"PATCH_VBMETA_FLAG={boot['vbmeta']};\n"
+            f". tools/ak3-core.sh;\n\n{install}\n")
+
+
 def package(name, data, dry=False):
-    cfg = data.get("package", {"enabled": False})
-    require(cfg.get("enabled") is True, "Packaging disabled. Configure a device-specific AnyKernel3 template.")
+    """Always produce a device-checked AnyKernel3 ZIP from declarative YAML."""
+    cfg = data["package"]
     folder = managed(name, dry)
-    template = local_path(cfg["template"], "package.template")
-    script = template / "anykernel.sh"
-    require(script.is_file() or dry, "Template must contain anykernel.sh")
-    if not dry:
-        body = script.read_text(encoding="utf-8")
-        require(bool(re.search(r"^\s*do\.devicecheck=1\s*;?", body, re.M)),
-                "Refusing to package: AnyKernel3 device check must be enabled")
-    staging = folder / "package-staging"
-    out = folder / "out" / "arch" / data["build"]["arch"] / "boot"
-    artifact = folder / "kernel.zip"
-    print("PACKAGE", template, "->", artifact)
+    artifact = folder / cfg["output"]
+    template = bootstrap_anykernel(data, dry=dry)
+    print("PACKAGE AnyKernel3", cfg["device"]["codenames"], "->", artifact)
     if dry:
+        for src, dst in cfg["images"].items():
+            print("IMAGE", src, "->", dst)
         return artifact
+
+    require((template / "tools" / "ak3-core.sh").is_file(),
+            "AnyKernel3 template missing tools/ak3-core.sh")
+    require((template / "META-INF" / "com" / "google" / "android" / "update-binary").is_file(),
+            "AnyKernel3 template missing recovery updater")
+    staging = folder / "package-staging"
     if staging.exists():
         shutil.rmtree(staging)
-    shutil.copytree(template, staging, symlinks=False)
+    for entry in template.rglob("*"):
+        require(not entry.is_symlink(), "Refusing AnyKernel3 template symlink: " + str(entry))
+    shutil.copytree(template, staging, symlinks=False,
+                    ignore=shutil.ignore_patterns(".git", "README.md", "*placeholder*"))
+    (staging / "anykernel.sh").write_text(render_anykernel(cfg), encoding="utf-8")
+
+    out = folder / "out"
     for src_image, dst_image in cfg["images"].items():
         source = (out / relative(src_image, "package image source")).resolve()
-        require(source.is_relative_to(out.resolve()) and source.is_file(), "Missing kernel artifact: " + str(source))
+        require(source.is_relative_to(out.resolve()) and source.is_file(),
+                "Missing required kernel output: " + str(source))
         dest = (staging / relative(dst_image, "package image destination")).resolve()
-        require(dest.is_relative_to(staging.resolve()), "Unsafe ZIP destination")
+        require(dest.is_relative_to(staging.resolve()), "Unsafe AnyKernel3 destination")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, dest)
-    with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+
+    with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=9) as zf:
         for p in sorted(staging.rglob("*")):
+            rel = p.relative_to(staging)
+            if ".git" in rel.parts or p.name == "README.md" or "placeholder" in p.name.lower():
+                continue
+            require(not p.is_symlink(), "Unexpected symlink in AnyKernel3 template: " + str(rel))
             if p.is_file():
-                zf.write(p, p.relative_to(staging))
+                zf.write(p, rel.as_posix())
     shutil.rmtree(staging)
     print("Created:", artifact)
     return artifact
@@ -396,6 +509,7 @@ def main(argv=None):
         elif opts.command == "build":
             require(opts.jobs > 0, "jobs must be greater than zero")
             build(WORK_NAME, data, opts.jobs, dry=opts.dry_run)
+            package(WORK_NAME, data, dry=opts.dry_run)
         elif opts.command == "package":
             package(WORK_NAME, data, dry=opts.dry_run)
         return 0

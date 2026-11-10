@@ -93,7 +93,7 @@ jobs:
           ccache --zero-stats
           ccache --show-config | grep -E 'cache_dir|base_dir|compiler_check|max_size' || true
 
-      - name: Build selected kernel.yaml (DroidSpaces always enabled)
+      - name: Build and package selected kernel.yaml (DroidSpaces always enabled)
         run: python -m kernelforge build -j 4
 
       - name: Report ccache performance
@@ -109,14 +109,14 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload compiled kernel images
+      - name: Upload generated AnyKernel3 ZIP and kernel images
         uses: actions/upload-artifact@v4
         with:
-          name: lineage24-droidspaces-kernel-${{ github.run_number }}
+          name: droidspaces-kernel-${{ github.run_number }}
           path: |
-            .work/kernel/out/arch/arm64/boot/Image
-            .work/kernel/out/arch/arm64/boot/dtb
-            .work/kernel/out/arch/arm64/boot/dtbo.img
+            .work/kernel/*.zip
+            .work/kernel/out/arch/**/boot/Image*
+            .work/kernel/out/arch/**/boot/dtb*
             .work/kernel/out/.config
           if-no-files-found: error
           retention-days: 14

@@ -67,10 +67,15 @@ class KernelTests(unittest.TestCase):
                 with self.assertRaises(cli.ForgeError):
                     cli.local_path(item, "test")
 
-    def test_package_disabled_until_device_template_exists(self):
+    def test_anykernel_package_always_configured(self):
         data = cli.load_config()
-        with self.assertRaises(cli.ForgeError):
-            cli.package(cli.WORK_NAME, data, dry=True)
+        self.assertEqual(data["package"]["type"], "anykernel3")
+        self.assertEqual(data["package"]["device"]["codenames"], ["lemonades"])
+        self.assertEqual(data["package"]["boot"]["slots"], "auto")
+        with patch.object(cli, "WORK", Path("/tmp/kernelforge-tests")):
+            with redirect_stdout(io.StringIO()):
+                artifact = cli.package(cli.WORK_NAME, data, dry=True)
+        self.assertEqual(artifact.name, "DroidSpaces-lemonades.zip")
 
 
 if __name__ == "__main__":

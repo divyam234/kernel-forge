@@ -38,14 +38,14 @@ class GithubActionsTests(unittest.TestCase):
 
     def test_uploads_kernel_artifacts_and_shows_stats(self):
         steps = self.data["jobs"]["build"]["steps"]
-        build = next(s for s in steps if s.get("name") == "Build selected kernel.yaml (DroidSpaces always enabled)")
+        build = next(s for s in steps if s.get("name") == "Build and package selected kernel.yaml (DroidSpaces always enabled)")
         self.assertIn("python -m kernelforge build", build["run"])
         stats = next(s for s in steps if s.get("name") == "Report ccache performance")
         self.assertEqual(stats["if"], "always()")
         self.assertIn("GITHUB_STEP_SUMMARY", stats["run"])
-        upload = next(s for s in steps if s.get("name") == "Upload compiled kernel images")
+        upload = next(s for s in steps if s.get("name") == "Upload generated AnyKernel3 ZIP and kernel images")
         self.assertEqual(upload["uses"], "actions/upload-artifact@v4")
-        for path in ("Image", "dtb", "dtbo.img", ".config"):
+        for path in ("Image*", "dtb*", "*.zip", ".config"):
             self.assertIn(path, upload["with"]["path"])
 
 
