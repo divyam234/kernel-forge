@@ -94,7 +94,7 @@ The `kernel.yaml` source and LLVM toolchain are both pinned to full Git commit h
 
 ## GitHub Actions and ccache
 
-The GitHub Actions workflow (`.github/workflows/kernel.yml`) validates configuration and tests on pull requests. On pushes to `main` and manual `Actions → KernelForge → Run workflow` events it additionally compiles the one kernel defined in `kernel.yaml` and **automatically creates a device-checked AnyKernel3 ZIP**, with DroidSpaces always enabled. Successful builds upload the generated `*.zip`, raw kernel images, and resolved `.config` as downloadable workflow artifacts (retained for 14 days). ZIP naming and image mappings are configured only in YAML; this workflow is not hardcoded to OnePlus 9R. GitHub Releases publishing remains separate and is not enabled.
+The GitHub Actions workflow (`.github/workflows/kernel.yml`) validates configuration and tests on pull requests. On pushes to `main` and manual `Actions → KernelForge → Run workflow` events it additionally compiles the one kernel defined in `kernel.yaml` and **automatically creates a YAML-configured AnyKernel3 ZIP**, with DroidSpaces always enabled. Successful builds upload the generated `*.zip`, raw kernel images, and resolved `.config` as downloadable workflow artifacts (retained for 14 days). ZIP naming and image mappings are configured only in YAML; this workflow is not hardcoded to OnePlus 9R. GitHub Releases publishing remains separate and is not enabled.
 
 The build job installs `ccache` and dependencies, restores the pinned LLVM toolchain checkout and a compressed ccache directory using `actions/cache@v4`, resets hit/miss counters, builds with the pinned Clang toolchain, and prints cache statistics to both the job log and GitHub Actions step summary. The LLVM cache key follows the toolchain commit. Ccache keys include the runner OS/architecture and a configuration hash; a unique run ID permits refreshing the cache after every successful build. An older cache can be restored when configuration changes; ccache validates the compiler and inputs itself. The ccache limit defaults to 2 GiB via `kernel.yaml`; GitHub's cache retention/eviction limits still apply.
 
@@ -125,6 +125,7 @@ Every successful `./build.sh build` produces a ZIP using `package` in the **same
 package:
   type: anykernel3
   output: DroidSpaces-lemonades.zip
+  device_check: false       # do.devicecheck=0 (default); true enforces codenames
   device:
     name: OnePlus 9R
     codenames: [lemonades]
@@ -145,7 +146,7 @@ package:
     arch/arm64/boot/dtbo.img: dtbo.img
 ~~~
 
-The generated script always sets `do.devicecheck=1`, explicitly lists permitted Android device codenames and versions, and uses the selected boot partition/slot policy. `do.modules=0` and `do.systemless=0`; no Magisk dependency is added. With `write_boot`, AnyKernel3 repacks the existing boot image and flashes bundled `dtbo.img` through its pinned core. The `flash_boot` alternative uses `split_boot`, `flash_boot` and `flash_dtbo`.
+The generated script sets `do.devicecheck=0` **by default**, so AnyKernel3 skips codename checking. To enforce permitted codenames, set `package.device_check: true` in YAML, which generates `do.devicecheck=1`. The device codename and Android version fields are still generated, and the selected boot partition/slot policy is used. Disabling the codename check increases the risk of flashing an incompatible kernel onto another device. `do.modules=0` and `do.systemless=0`; no Magisk dependency is added. With `write_boot`, AnyKernel3 repacks the existing boot image and flashes bundled `dtbo.img` through its pinned core. The `flash_boot` alternative uses `split_boot`, `flash_boot` and `flash_dtbo`.
 
 For another device, update **both** the kernel source/defconfig/patches and this package block. Set the actual `ro.product.device` codenames, verified Android versions, boot partition and A/B layout, correct kernel image filenames, and the required DTB/DTBO outputs. AnyKernel3 handles many device layouts, but cannot make mismatched vendor kernels, boot headers, image formats or uncommon GKI/vendor_boot arrangements compatible automatically. **Do not flash** until those inputs and a boot/recovery plan are verified on the physical device.
 

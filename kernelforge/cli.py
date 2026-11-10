@@ -62,11 +62,13 @@ def validate_item(item, allowed, label):
 
 def validate_package(cfg):
     """Validate AnyKernel3 configuration before any Git or filesystem changes."""
-    fields(cfg, {"type", "output", "device", "anykernel", "boot", "images"}, "package")
+    fields(cfg, {"type", "output", "device_check", "device", "anykernel", "boot", "images"}, "package")
     require(cfg.get("type") == "anykernel3", "package.type must be anykernel3")
     output = cfg.get("output")
     require(isinstance(output, str) and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.zip", output)),
             "package.output must be a safe ZIP filename")
+    require(type(cfg.get("device_check", False)) is bool,
+            "package.device_check must be true or false")
 
     device = cfg.get("device")
     fields(device, {"name", "codenames", "android_versions"}, "package.device")
@@ -426,7 +428,7 @@ def render_anykernel(cfg):
             f"## AnyKernel3 installer, based on osm0sis/AnyKernel3.\n"
             f"properties() {{ '\n"
             f"kernel.string={device['name']} - DroidSpaces Kernel\n"
-            f"do.devicecheck=1\ndo.modules=0\ndo.systemless=0\n"
+            f"do.devicecheck={int(cfg.get('device_check', False))}\ndo.modules=0\ndo.systemless=0\n"
             f"do.cleanup=1\ndo.cleanuponabort=0\n"
             f"{names}\n"
             f"supported.versions={versions}\n"
@@ -440,7 +442,7 @@ def render_anykernel(cfg):
 
 
 def package(name, data, dry=False):
-    """Always produce a device-checked AnyKernel3 ZIP from declarative YAML."""
+    """Always produce a YAML-configured AnyKernel3 ZIP (device check defaults off)."""
     cfg = data["package"]
     folder = managed(name, dry)
     artifact = folder / cfg["output"]

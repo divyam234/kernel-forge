@@ -250,6 +250,10 @@
           "additionalProperties": {
             "$ref": "#/$defs/path"
           }
+        },
+        "device_check": {
+          "type": "boolean",
+          "description": "Enable codename validation; false by default"
         }
       }
     },

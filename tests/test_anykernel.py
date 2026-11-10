@@ -19,6 +19,7 @@ class AnyKernelTests(unittest.TestCase):
 
     def test_dynamic_device_and_boot_settings(self):
         cfg = copy.deepcopy(self.config["package"])
+        cfg["device_check"] = True
         cfg["device"] = {
             "name": "Example Device",
             "codenames": ["example", "examplepro"],
@@ -50,6 +51,7 @@ class AnyKernelTests(unittest.TestCase):
 
     def test_default_oneplus9r_script(self):
         script = cli.render_anykernel(self.config["package"])
+        self.assertIn("do.devicecheck=0\n", script)
         self.assertIn("device.name1=lemonades\n", script)
         self.assertIn("supported.versions=17\n", script)
         self.assertIn("IS_SLOT_DEVICE=auto;", script)
@@ -104,7 +106,7 @@ class AnyKernelTests(unittest.TestCase):
                 self.assertNotIn("ramdisk/placeholder", paths)
                 script = zf.read("anykernel.sh").decode()
                 self.assertIn("device.name1=lemonades\n", script)
-                self.assertIn("do.devicecheck=1\n", script)
+                self.assertIn("do.devicecheck=0\n", script)
                 self.assertNotIn("maguro", script)
                 self.assertEqual(zf.read("Image"), b"KERNEL-arch/arm64/boot/Image")
 
@@ -121,6 +123,7 @@ class AnyKernelTests(unittest.TestCase):
             ("unknown_slot", lambda x: x["boot"].update({"slots": "thirdslot"})),
             ("unsafe_partition", lambda x: x["boot"].update({"partition": "../boot"})),
             ("missing_pin", lambda x: x["anykernel"].pop("commit")),
+            ("invalid_device_check", lambda x: x.update({"device_check": "false"})),
         ]
         for name, modify in cases:
             with self.subTest(case=name):

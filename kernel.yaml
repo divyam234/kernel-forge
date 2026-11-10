@@ -59,6 +59,7 @@ patches:
 package:
   type: anykernel3
   output: DroidSpaces-lemonades.zip
+  device_check: false          # do.devicecheck=0 by default; set true to enforce codenames
   device:
     name: OnePlus 9R
     codenames: [lemonades]       # ro.product.device / ro.build.product
